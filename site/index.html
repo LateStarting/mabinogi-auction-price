@@ -41,6 +41,20 @@
   .deal { display:inline-block; margin-left:6px; padding:0 6px; border-radius:4px; background:var(--good); color:#fff; font-size:11px; }
   .tag { display:inline-block; margin-left:6px; padding:0 6px; border-radius:4px; border:1px solid var(--line); color:var(--mute); font-size:11px; }
   .muted { color:var(--mute); }
+  .hot { display:inline-block; margin-left:6px; padding:0 6px; border-radius:4px; background:#c2410c; color:#fff; font-size:11px; font-weight:600; }
+  tr.hotrow td { background:color-mix(in srgb, #c2410c 9%, transparent); }
+  .grade { display:inline-block; min-width:20px; padding:0 5px; border-radius:4px; font-size:11px; font-weight:600; text-align:center; border:1px solid var(--line); }
+  .grade.A { background:var(--good); color:#fff; border-color:transparent; }
+  .grade.B { color:var(--ink); }
+  .grade.C { color:var(--mute); }
+  #nrows tr.nitem { cursor:pointer; }
+  .reasons { margin:0; padding-left:18px; }
+  .reasons li { margin:2px 0; }
+  .reasons .ok::marker { content:"✔ "; color:var(--good); }
+  .reasons .ng::marker { content:"⚠ "; color:#c2410c; }
+  details.guide summary { cursor:pointer; }
+  details.guide ol { margin:8px 0 0; padding-left:20px; }
+  details.guide li { margin:4px 0; }
   .count { margin:8px 2px; color:var(--mute); font-size:12px; }
   #rows tr.item { cursor:pointer; }
   #rows tr.item:hover td { background:color-mix(in srgb, var(--acc) 6%, transparent); }
@@ -129,10 +143,23 @@
   </section>
 
   <section id="view-npc" hidden>
+    <details class="notice guide" id="npc-guide">
+      <summary><b>이 표 읽는 법</b> — 차익거래가 아니라 "NPC 화폐를 골드로 바꾸는 환율표"입니다</summary>
+      <ol>
+        <li><b>무엇을 보여 주나:</b> NPC에서 두카트(교역 화폐)·인장·솔방울로 산 물건을 경매장에 팔면, 그 화폐 1개가 골드 몇으로 바뀌는지입니다. 골드로 파는 품목은 "NPC에서 사서 경매장에 팔면 남는 골드"입니다.</li>
+        <li><b>기준 환율:</b> 매물이 충분한 품목들의 효율 중앙값입니다. 대부분의 품목은 이 근처에 모여 있고, 그건 시장이 이미 두카트 값을 반영했다는 뜻이라 특별한 이득이 아닙니다. 가진 두카트를 어디에 쓰면 손해를 덜 보는지 고르는 용도입니다.</li>
+        <li><b>주목 배지:</b> 기준 환율보다 <span id="g-mult"></span>배 이상 높고, 가격 근거가 믿을 만한(등급 A·B) 품목입니다. 시장이 놓치고 있을 수 있는 후보입니다.</li>
+        <li><b>등급:</b> A = 실제 체결 중앙값 기반 · B = 내놓은 최저가 기반이지만 매물 <span id="g-min"></span>개 이상 · C = 매물이 적거나 최저가 하나만 튀어서 믿기 어려움.</li>
+        <li><b>행을 누르면</b> 그렇게 판단한 근거(✔)와 확인할 점(⚠)이 나옵니다.</li>
+        <li><b>실제 이익은 따로 따져야 합니다:</b> 두카트를 버는 데 드는 교역 시간, 실제로 팔리는 속도, 여러 개 팔면 내려가는 가격, 수수료(<span id="g-fee"></span>% 가정), 산 물건의 재거래 가능 여부.</li>
+      </ol>
+    </details>
+    <div class="notice" id="npc-rate"></div>
     <div class="notice" id="npc-note"></div>
     <div class="controls">
       <input type="search" id="nq" placeholder="아이템 이름 검색">
       <select id="ncur"></select>
+      <label class="chk"><input type="checkbox" id="nhot"> 주목만</label>
       <label class="chk"><input type="checkbox" id="nthick" checked> 경매장 매물 3개 이상만</label>
       <label class="chk"><input type="checkbox" id="nvalued" checked> 경매장 가격 있는 품목만</label>
     </div>
@@ -146,6 +173,8 @@
           <th data-k="unit_price">경매장 가격<span class="period">개당</span></th>
           <th data-k="value">경매장 가치<span class="period">묶음 기준</span></th>
           <th data-k="eff" id="eff-th">효율</th>
+          <th data-k="vs_rate" id="vs-th">기준 대비</th>
+          <th data-k="grade_n">등급</th>
           <th data-k="listings_n">경매장 매물</th>
           <th data-k="limit">구매 제한</th>
         </tr></thead>
@@ -334,31 +363,60 @@ function renderNpc() {
   $('eff-th').innerHTML = gold
     ? '차익<span class="period">경매장 순수익 − NPC 가격</span>'
     : `${esc(cur)} 1개당 골드<span class="period">수수료 뺀 경매장 가치 ÷ 가격</span>`;
+  const hotOnly = $('nhot').checked;
+  const rate = (N.rates || {})[cur];
+  $('vs-th').innerHTML = gold ? '배수<span class="period">순가치 ÷ NPC 가격</span>' : '기준 대비<span class="period">기준 환율의 몇 배</span>';
+  $('npc-rate').innerHTML = gold
+    ? `골드 판매품은 <b>수수료 뺀 경매장 가치가 NPC 가격의 ${N.rules.gold_min_ratio}배 이상</b>이면 주목으로 표시합니다.`
+    : rate
+      ? `<b>${esc(cur)} 기준 환율: 1개 ≈ ${fmt2(rate.median)}골드</b> (매물이 충분한 품목 ${rate.n}개의 효율 중앙값). ` +
+        (rate.ok ? `이보다 ${N.rules.highlight_mult}배 이상 높은 품목을 주목으로 표시합니다.`
+                 : `품목이 ${N.rules.rate_min_n}개 미만이라 기준이 불안정해서, 이 화폐는 주목 표시를 하지 않습니다.`)
+      : `${esc(cur)}는 아직 비교할 만큼 경매장 가격이 모이지 않았습니다.`;
   let rows = N.items.filter(r =>
     r.currency === cur &&
     (!q || r.name.toLowerCase().includes(q)) &&
+    (!hotOnly || r.hot) &&
     (!valued || r.value != null) &&
     (!thick || r.basis === '시세' || (r.listings_n || 0) >= 3));
   rows = sortRows(rows, sorts.npc);
-  $('ncount').textContent = `${rows.length}개 품목 · 경매장 조회 ${N.checked}/${N.total}개 완료`;
+  const hots = N.items.filter(r => r.currency === cur && r.hot).length;
+  $('ncount').textContent = `${rows.length}개 품목 · 주목 ${hots}개 · 경매장 조회 ${N.checked}/${N.total}개 완료`;
   $('nrows').innerHTML = rows.map(r => {
-    const thin = r.basis !== '시세' && (r.listings_n || 0) < 3;
+    const thin = r.grade === 'C' || (r.basis !== '시세' && (r.listings_n || 0) < 3);
     const where = r.npcs.length > 3 ? `${esc(r.npcs[0])} 외 ${r.npcs.length - 1}명` : r.npcs.map(esc).join(', ');
     const eff = gold
       ? (r.profit != null ? `<span class="${r.profit > 0 ? 'pos' : 'neg'}">${fmt(r.profit)}</span>` : '')
       : (r.gold_per != null ? `<b>${fmt2(r.gold_per)}</b>` : '');
-    return `<tr class="${thin ? 'thin' : ''}">
-      <td>${esc(r.name)}${r.count > 1 ? ` <span class="muted">×${r.count}</span>` : ''}${r.basis ? `<span class="tag" title="경매장 가격 기준">${r.basis}</span>` : ''}${r.tradable === false ? '<span class="tag">경매장 매물 없음</span>' : ''}</td>
+    const mult = gold ? r.ratio : r.vs_rate;
+    const multCls = mult == null ? '' : (gold ? mult >= N.rules.gold_min_ratio : mult >= N.rules.highlight_mult) ? 'pos' : mult < 1 ? 'muted' : '';
+    const open = NOPEN.has(r.name + r.price);
+    const gradeTip = { A: '실제 체결 중앙값 기반', B: '최저 매물가 기반, 매물 충분', C: '매물 부족 또는 최저가가 튐 — 믿기 어려움' }[r.grade] || '';
+    return `<tr class="nitem ${thin ? 'thin' : ''} ${r.hot ? 'hotrow' : ''}" data-key="${esc(r.name + r.price)}">
+      <td>${r.why ? `<span class="caret">${open ? '▾' : '▸'}</span>` : ''}${esc(r.name)}${r.count > 1 ? ` <span class="muted">×${r.count}</span>` : ''}${r.hot ? '<span class="hot">주목</span>' : ''}${r.basis ? `<span class="tag" title="경매장 가격 기준">${r.basis}</span>` : ''}${r.tradable === false ? '<span class="tag">경매장 매물 없음</span>' : ''}</td>
       <td class="cat">${where}<br>${esc(r.tab)}</td>
       <td>${fmt(r.price)} <span class="muted">${esc(r.currency)}</span></td>
       <td>${fmt(r.unit_price)}</td>
       <td>${fmt(r.value)}</td>
       <td>${eff}</td>
+      <td class="${multCls}">${mult != null ? mult.toFixed(1) + '배' : ''}</td>
+      <td>${r.grade ? `<span class="grade ${r.grade}" title="${gradeTip}">${r.grade}</span>` : ''}</td>
       <td>${r.listings != null ? esc(String(r.listings)) : '<span class="muted">조회 전</span>'}</td>
       <td class="muted">${r.limit ? esc(r.limit) : ''}</td>
-    </tr>`;
+    </tr>${open && r.why ? `<tr class="detail"><td colspan="10"><ul class="reasons">
+        ${r.why.map(s => `<li class="ok">${esc(s)}</li>`).join('')}
+        ${r.warn.map(s => `<li class="ng">${esc(s)}</li>`).join('')}
+      </ul></td></tr>` : ''}`;
   }).join('');
 }
+const NOPEN = new Set();
+$('nrows').addEventListener('click', e => {
+  const tr = e.target.closest('tr.nitem');
+  if (!tr) return;
+  const k = tr.dataset.key;
+  NOPEN.has(k) ? NOPEN.delete(k) : NOPEN.add(k);
+  renderNpc();
+});
 
 function setupSort(tableId, view, render) {
   document.querySelectorAll(`#${tableId} th`).forEach(th => th.addEventListener('click', () => {
@@ -382,7 +440,7 @@ setupSort('t-npc', 'npc', renderNpc);
 setupSort('t-recent', 'recent', renderRecent);
 ['rq', 'rcat'].forEach(id => $(id).addEventListener('input', renderRecent));
 ['q', 'cat', 'traded', 'deals'].forEach(id => $(id).addEventListener('input', renderMarket));
-['nq', 'ncur', 'nthick', 'nvalued'].forEach(id => $(id).addEventListener('input', renderNpc));
+['nq', 'ncur', 'nhot', 'nthick', 'nvalued'].forEach(id => $(id).addEventListener('input', renderNpc));
 
 fetch('prices.json', { cache: 'no-store' }).then(r => r.json()).then(d => {
   DATA = d;
@@ -406,7 +464,16 @@ fetch('prices.json', { cache: 'no-store' }).then(r => r.json()).then(d => {
   $('recent-note').textContent = `수집 대상 ${d.categories.length}개 카테고리의 최신 체결 ${(d.recent || []).length}건입니다. 거래 내역은 45분마다 모으고, 게임 데이터는 평균 10분 늦게 반영됩니다. 시세 대비가 +이면 시세보다 비싸게, −이면 싸게 팔린 거래입니다.`;
 
   if (d.npc) {
-    d.npc.items.forEach(r => { r.listings_n = typeof r.listings === 'string' ? parseInt(r.listings) : r.listings; r.eff = r.currency === '골드' ? r.profit : r.gold_per; });
+    d.npc.items.forEach(r => {
+      if (r.listings_n == null && r.listings != null) r.listings_n = typeof r.listings === 'string' ? parseInt(r.listings) : r.listings;
+      r.eff = r.currency === '골드' ? r.profit : r.gold_per;
+      if (r.currency === '골드') r.vs_rate = r.ratio;
+      r.grade_n = { A: 3, B: 2, C: 1 }[r.grade] || 0;
+    });
+    const rules = d.npc.rules || {};
+    $('g-mult').textContent = rules.highlight_mult ?? '';
+    $('g-min').textContent = rules.min_listings ?? '';
+    $('g-fee').textContent = rules.fee_rate != null ? Math.round(rules.fee_rate * 100) : '';
     const order = ['두카트', '골드', '모험가의 인장', '금박 솔방울'];
     const curs = [...new Set(d.npc.items.map(r => r.currency))].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
     curs.forEach(c => $('ncur').insertAdjacentHTML('beforeend', `<option value="${esc(c)}">${esc(c)}${c === '골드' ? ' (NPC에서 사서 경매장에 팔기)' : ' 효율'}</option>`));

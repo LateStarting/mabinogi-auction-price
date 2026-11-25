@@ -123,9 +123,23 @@ def minutes_since(iso):
     return (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(iso)).total_seconds() / 60
 
 
-def collect_history(client, data):
+def npc_extra_categories(data):
+    """거래 가능한 NPC 품목이 많이 속한 경매장 카테고리 (기본 카테고리 제외, 최대 N개).
+    NPC_HISTORY_FROM 이전이면 빈 목록."""
+    if dt.datetime.now(KST).date().isoformat() < config.NPC_HISTORY_FROM:
+        return []
+    lookup = load_json(data / "lookup.json", {})
+    counts = {}
+    for e in lookup.values():
+        cat = e.get("category")
+        if cat and cat not in config.CATEGORIES and e.get("n", 0) >= config.NPC_HISTORY_MIN_LISTINGS:
+            counts[cat] = counts.get(cat, 0) + 1
+    return [c for c, _ in sorted(counts.items(), key=lambda x: -x[1])[: config.NPC_HISTORY_MAX_CATS]]
+
+
+def collect_history(client, data, extra=()):
     new_rows = {}
-    for cat in config.CATEGORIES:
+    for cat in list(config.CATEGORIES) + [c for c in extra if c not in config.CATEGORIES]:
         for h in client.sweep("history", cat, "auction_history"):
             ts = dt.datetime.fromisoformat(h["date_auction_buy"].replace("Z", "+00:00"))
             day = ts.astimezone(KST).date().isoformat()
@@ -273,8 +287,11 @@ def main():
     # 우선순위: 거래 내역(놓치면 복구 불가) → 매물 → NPC 상점 → 이름 조회
     try:
         if do_hist:
-            report["history_added"] = collect_history(client, data)
+            extra = npc_extra_categories(data)
+            report["history_extra_categories"] = extra
+            report["history_added"] = collect_history(client, data, extra)
             state["last_history"] = now
+            state["history_extra_categories"] = extra
         if do_list:
             report["listings"] = collect_listings(client, data)
             state["last_listings"] = now

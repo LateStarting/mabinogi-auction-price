@@ -78,8 +78,16 @@ def build_npc(data, market):
             unit, basis = lk["lowest"][0], "최저 매물"
         if lk:
             r["listings"] = lk["n"] if not lk.get("more") else f'{lk["n"]}+'
+            r["listings_n"] = lk["n"]
             r["checked_at"] = lk["checked_at"]
             r["tradable"] = lk["n"] > 0 or (m is not None)
+            r["category"] = lk.get("category")
+            if len(lk["lowest"]) >= 2:
+                # 최저가와 두 번째 가격 차이 (최저 매물 하나만 튀는지 확인용)
+                r["gap2"] = round(lk["lowest"][1] / lk["lowest"][0] - 1, 3) if lk["lowest"][0] else None
+        if m:
+            r["trades"] = m.get("trades")
+            r["per_day"] = m.get("per_day")
         if unit:
             value = unit * it["count"]
             net = value * (1 - config.FEE_RATE)
@@ -89,14 +97,101 @@ def build_npc(data, market):
                 r["ratio"] = round(net / it["price"], 3) if it["price"] else None
             else:
                 r["gold_per"] = round(net / it["price"], 3) if it["price"] else None
-    out = sorted(rows.values(), key=lambda r: -(r.get("gold_per") or r.get("ratio") or 0))
+    out = list(rows.values())
+    rates = assess(out)
+    out.sort(key=lambda r: -(r.get("gold_per") or r.get("ratio") or 0))
     return {
         "collected_at": snap["collected_at"],
         "server": config.NPC_SERVER, "channel": config.NPC_CHANNEL,
         "excluded_tabs": sorted(config.NPC_EXCLUDE_TABS),
         "checked": len(lookup), "total": len({r["name"] for r in out}),
+        "rates": rates,
+        "rules": {
+            "highlight_mult": HIGHLIGHT_MULT, "min_listings": MIN_LISTINGS,
+            "gold_min_ratio": GOLD_MIN_RATIO, "fee_rate": config.FEE_RATE, "rate_min_n": RATE_MIN_N,
+        },
         "items": out,
     }
+
+
+# --- 하이라이트 기준 ---
+HIGHLIGHT_MULT = 1.5     # 화폐별 기준 환율의 1.5배 이상이면 "주목"
+MIN_LISTINGS = 3         # 경매장 매물이 이보다 적으면 가격을 믿지 않음
+GOLD_MIN_RATIO = 1.2     # 골드 판매품: 수수료 뺀 경매장 가치가 NPC 가격의 1.2배 이상
+HIGH_GAP2 = 0.3          # 최저가가 두 번째 가격보다 30% 넘게 싸면 "최저가 하나만 튐"
+RATE_MIN_N = 5           # 기준 환율을 믿으려면 믿을 만한 품목이 최소 이만큼
+
+
+def assess(rows):
+    """화폐별 기준 환율(믿을 만한 품목의 효율 중앙값)을 구하고, 품목마다 등급·근거·주의를 붙인다."""
+    def reliable(r):
+        return r.get("value") is not None and (r.get("basis") == "시세" or (r.get("listings_n") or 0) >= MIN_LISTINGS)
+
+    rates = {}
+    for cur in {r["currency"] for r in rows if r["currency"] != "골드"}:
+        effs = sorted(r["gold_per"] for r in rows if r["currency"] == cur and reliable(r) and r.get("gold_per"))
+        if effs:
+            # 믿을 만한 품목이 RATE_MIN_N 개 미만이면 기준 환율도 믿지 않음 (하이라이트 안 함)
+            rates[cur] = {"median": round(statistics.median(effs), 3), "n": len(effs), "ok": len(effs) >= RATE_MIN_N}
+
+    for r in rows:
+        if r.get("value") is None:
+            continue
+        why, warn = [], []
+        lst, basis = r.get("listings_n"), r.get("basis")
+        # 가격 근거
+        if basis == "시세":
+            why.append(f"가격 근거: 실제 체결 중앙값(체결 {r.get('trades')}건)")
+        else:
+            warn.append("가격 근거가 '내놓은 최저가'라 실제로 그 값에 팔린다는 보장은 없음")
+            if r.get("trades") is None:
+                warn.append("체결 기록 미수집 → 팔리는 속도 모름")
+        if lst is not None:
+            if lst >= 10:
+                why.append(f"경매장 매물 {r['listings']}개 → 거래되는 품목(가격 비교 가능)")
+            elif lst >= MIN_LISTINGS:
+                why.append(f"경매장 매물 {lst}개")
+            else:
+                warn.append(f"경매장 매물 {lst}개뿐 → 가격 신뢰 낮음")
+        if r.get("gap2") is not None and r["gap2"] > HIGH_GAP2:
+            warn.append(f"최저가가 두 번째 매물보다 {round(r['gap2'] * 100)}% 쌈 → 실제 시장가는 더 높을 수 있음")
+        if len(r["npcs"]) > 3:
+            why.append(f"NPC {len(r['npcs'])}명이 판매 → 서버·채널 상관없이 구매 가능")
+        if r.get("limit"):
+            warn.append(f"구매 제한 {r['limit']} → 반복 이익은 제한됨")
+        else:
+            why.append("구매 제한 없음")
+        warn.append("NPC에서 산 물건의 재거래(귀속) 여부·경매장 매물의 옵션 차이는 게임에서 확인 필요")
+
+        # 효율 판단
+        score = None
+        if r["currency"] == "골드":
+            ratio = r.get("ratio")
+            if ratio:
+                score = ratio
+                why.insert(0, f"수수료 뺀 경매장 가치가 NPC 가격의 {ratio:.1f}배 (개당 {r['profit']:,}골드 남음)")
+                hot = ratio >= GOLD_MIN_RATIO
+        else:
+            rate = rates.get(r["currency"], {})
+            base = rate.get("median")
+            if base and r.get("gold_per"):
+                score = r["gold_per"] / base
+                r["vs_rate"] = round(score, 2)
+                why.insert(0, f"{r['currency']} 1개 = {r['gold_per']:,}골드 — 기준 환율({base:,})의 {score:.1f}배")
+                hot = score >= HIGHLIGHT_MULT and rate.get("ok")
+                if not rate.get("ok"):
+                    warn.insert(0, f"{r['currency']} 기준 환율이 품목 {rate['n']}개로만 계산돼 비교가 불안정함")
+            else:
+                hot = False
+        trust = reliable(r) and not (r.get("gap2") is not None and r["gap2"] > HIGH_GAP2)
+        if score is None:
+            continue
+        # 등급: A = 체결 시세 기반, B = 매물 충분, C = 매물 부족·최저가 튐
+        grade = "A" if basis == "시세" else ("B" if trust else "C")
+        r["grade"] = grade
+        r["hot"] = bool(hot and grade in ("A", "B"))
+        r["why"], r["warn"] = why, warn
+    return rates
 
 
 def main():
@@ -197,7 +292,9 @@ def main():
         "history_from": first_ts,   # 집계에 들어간 가장 이른 체결 시각
         "history_to": last_ts,      # 가장 늦은 체결 시각
         "trade_rows": len(hist),
-        "categories": config.CATEGORIES,
+        # 기본 카테고리 + NPC 품목 때문에 추가로 체결을 모은 카테고리
+        "categories": list(config.CATEGORIES) + sorted(
+            {r["cat"] for r in items if r.get("trades") and r["cat"] not in config.CATEGORIES}),
         "params": {
             "baseline_days": config.BASELINE_DAYS,
             "min_trades": config.MIN_TRADES,
