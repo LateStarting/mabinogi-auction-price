@@ -40,6 +40,23 @@
   .tag { display:inline-block; margin-left:6px; padding:0 6px; border-radius:4px; border:1px solid var(--line); color:var(--mute); font-size:11px; }
   .muted { color:var(--mute); }
   .count { margin:8px 2px; color:var(--mute); font-size:12px; }
+  #rows tr.item { cursor:pointer; }
+  #rows tr.item:hover td { background:color-mix(in srgb, var(--acc) 6%, transparent); }
+  tr.detail > td { background:var(--bg); text-align:left; white-space:normal; padding:12px 16px; }
+  .detail-grid { display:flex; flex-wrap:wrap; gap:24px; }
+  .detail-grid h4 { margin:0 0 6px; font-size:12px; color:var(--mute); font-weight:600; }
+  .detail-grid table { min-width:0; width:auto; }
+  .detail-grid td { padding:2px 12px 2px 0; border:none; background:none; text-align:right; line-height:1.4; }
+  .detail-grid td:first-child { min-width:0; text-align:left; }
+  .spark { color:var(--acc); }
+  .caret { color:var(--mute); font-size:11px; margin-right:4px; }
+  @media (max-width: 720px) {
+    header, main, footer { padding:12px; }
+    table { min-width:0; }
+    th, td { padding:6px 6px; }
+    .hide-sm { display:none; }
+    td:first-child { min-width:140px; }
+  }
   footer { color:var(--mute); font-size:12px; }
   footer p { margin:4px 0; }
   [hidden] { display:none !important; }
@@ -69,14 +86,15 @@
       <table id="t-market">
         <thead><tr>
           <th data-k="key">아이템</th>
-          <th data-k="cat">카테고리</th>
+          <th data-k="cat" class="hide-sm">카테고리</th>
           <th data-k="median">시세(중앙값)<span class="period p-hist"></span></th>
           <th data-k="min_listing">최저 매물가<span class="period">현재</span></th>
           <th data-k="discount">시세 대비</th>
-          <th data-k="trades">체결 건수<span class="period p-hist"></span></th>
-          <th data-k="volume">체결 수량<span class="period p-hist"></span></th>
-          <th data-k="listed_qty">매물 수량<span class="period">현재</span></th>
-          <th data-k="last_price">최근 체결가</th>
+          <th data-k="trades" class="hide-sm">체결 건수<span class="period p-hist"></span></th>
+          <th data-k="per_day" class="hide-sm" id="perday-th" hidden>하루 평균 체결</th>
+          <th data-k="volume" class="hide-sm">체결 수량<span class="period p-hist"></span></th>
+          <th data-k="listed_qty" class="hide-sm">매물 수량<span class="period">현재</span></th>
+          <th data-k="last_price" class="hide-sm">최근 체결가</th>
         </tr></thead>
         <tbody id="rows"></tbody>
       </table>
@@ -158,21 +176,63 @@ function renderMarket() {
   rows = sortRows(rows, sorts.market);
   $('count').textContent =
     `${rows.length.toLocaleString('ko-KR')}개 품목` + (rows.length > LIMIT ? ` (상위 ${LIMIT}개 표시, 검색으로 좁혀 보세요)` : '');
-  $('rows').innerHTML = rows.slice(0, LIMIT).map(r => {
+  const perDay = !$('perday-th').hidden;
+  $('rows').innerHTML = rows.slice(0, LIMIT).map((r, i) => {
     const d = r.discount;
     const cls = d == null ? '' : d >= 0.05 ? 'pos' : d < 0 ? 'neg' : '';
-    return `<tr>
-      <td>${esc(r.key)}${r.deal_count ? `<span class="deal" title="저평가 매물 ${r.deal_count}건">저평가 ${r.deal_count}</span>` : ''}</td>
-      <td class="cat">${esc(r.cat)}</td>
+    const open = OPEN.has(r.key);
+    const hasDetail = r.daily || r.cheapest;
+    return `<tr class="item" data-i="${i}">
+      <td>${hasDetail ? `<span class="caret">${open ? '▾' : '▸'}</span>` : ''}${esc(r.key)}${r.deal_count ? `<span class="deal" title="저평가 매물 ${r.deal_count}건">저평가 ${r.deal_count}</span>` : ''}</td>
+      <td class="cat hide-sm">${esc(r.cat)}</td>
       <td>${fmt(r.median)}</td>
       <td>${fmt(r.min_listing)}</td>
       <td class="${cls}">${pct(d)}</td>
-      <td>${fmt(r.trades)}</td>
-      <td>${fmt(r.volume)}</td>
-      <td>${fmt(r.listed_qty)}</td>
-      <td class="muted">${fmt(r.last_price)}</td>
-    </tr>`;
+      <td class="hide-sm">${fmt(r.trades)}</td>
+      ${perDay ? `<td class="hide-sm">${r.per_day != null ? fmt2(r.per_day) : ''}</td>` : ''}
+      <td class="hide-sm">${fmt(r.volume)}</td>
+      <td class="hide-sm">${fmt(r.listed_qty)}</td>
+      <td class="muted hide-sm">${fmt(r.last_price)}</td>
+    </tr>${open ? detailRow(r) : ''}`;
   }).join('');
+  CURRENT = rows;
+}
+
+// 행을 누르면 펼치는 상세: 일별 시세 추이 + 가장 싼 매물 5개
+const OPEN = new Set();
+let CURRENT = [];
+function sparkline(daily) {
+  if (!daily || daily.length < 2) return '';
+  const w = 220, h = 48, p = 4, vals = daily.map(d => d[1]);
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
+  const pts = vals.map((v, i) => [p + i * (w - 2 * p) / (vals.length - 1), h - p - (v - lo) / span * (h - 2 * p)]);
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="일별 시세 추이">
+    <polyline fill="none" stroke="currentColor" stroke-width="2" points="${pts.map(q => q.join(',')).join(' ')}"/>
+    ${pts.map(q => `<circle cx="${q[0]}" cy="${q[1]}" r="2.5" fill="currentColor"/>`).join('')}</svg>`;
+}
+function detailRow(r) {
+  const cols = $('t-market').querySelectorAll('thead th:not([hidden])').length;
+  const daily = r.daily ? `<div><h4>일별 시세 (KST)</h4>${sparkline(r.daily)}
+    <table>${r.daily.map(d => `<tr><td class="muted">${d[0]}</td><td>${fmt(d[1])}</td><td class="muted">${d[2]}건</td></tr>`).join('')}</table></div>` : '';
+  const cheap = r.cheapest ? `<div><h4>가장 싼 매물 (매물 수집 ${timeKST(DATA.listings_at)} 기준)</h4>
+    <table>${r.cheapest.map(c => `<tr><td>${fmt(c[0])}</td><td class="muted">×${c[1]}</td>
+      <td class="${r.median && c[0] <= r.median * (1 - DATA.params.fee_rate) * (1 - DATA.params.min_margin) ? 'pos' : 'muted'}">${r.median ? pct(1 - c[0] / r.median) : ''}</td>
+      <td class="muted">만료 ${timeKST(c[2])}</td></tr>`).join('')}</table></div>` : '';
+  return `<tr class="detail"><td colspan="${cols}"><div class="detail-grid">${daily}${cheap}</div></td></tr>`;
+}
+$('rows').addEventListener('click', e => {
+  const tr = e.target.closest('tr.item');
+  if (!tr) return;
+  const r = CURRENT[+tr.dataset.i];
+  if (!r || !(r.daily || r.cheapest)) return;
+  OPEN.has(r.key) ? OPEN.delete(r.key) : OPEN.add(r.key);
+  renderMarket();
+});
+
+function ago(iso) {
+  if (!iso) return '';
+  const m = Math.round((Date.now() - new Date(iso)) / 60000);
+  return m < 1 ? '방금' : m < 60 ? `${m}분 전` : m < 1440 ? `${Math.floor(m / 60)}시간 전` : `${Math.floor(m / 1440)}일 전`;
 }
 
 function renderNpc() {
@@ -242,7 +302,9 @@ fetch('prices.json', { cache: 'no-store' }).then(r => r.json()).then(d => {
   const spanText = span < 1 ? `최근 ${Math.max(1, Math.round(span * 24))}시간` : `최근 ${span >= d.params.baseline_days ? d.params.baseline_days : span.toFixed(1)}일`;
   document.querySelectorAll('.p-hist').forEach(e => e.textContent = spanText);
   $('meta').textContent =
-    `시세 갱신 ${timeKST(d.generated_at)} · 매물 수집 ${timeKST(d.listings_at)} · 체결 ${d.trade_rows.toLocaleString('ko-KR')}건 (${spanText} 누적)`;
+    `시세 갱신 ${timeKST(d.generated_at)} (${ago(d.generated_at)}) · 매물 수집 ${timeKST(d.listings_at)} (${ago(d.listings_at)}) · 체결 ${d.trade_rows.toLocaleString('ko-KR')}건 (${spanText} 누적) · 행을 누르면 상세`;
+  // 하루치 이상 쌓이면 하루 평균 체결 열 표시
+  if (d.history_days >= 1) $('perday-th').hidden = false;
   if (d.history_days < d.params.baseline_days) {
     const w = $('warmup');
     w.hidden = false;

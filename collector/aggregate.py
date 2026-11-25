@@ -113,8 +113,10 @@ def main():
 
     by_key = {}
     for r in hist:
-        e = by_key.setdefault(r["key"], {"cat": r["cat"], "trades": [], "last": None})
+        e = by_key.setdefault(r["key"], {"cat": r["cat"], "trades": [], "last": None, "days": {}})
         e["trades"].append((r["price"], r["count"]))
+        day = dt.datetime.fromisoformat(r["ts"]).astimezone(KST).strftime("%m/%d")
+        e["days"].setdefault(day, []).append((r["price"], r["count"]))
         if e["last"] is None or r["ts"] > e["last"][0]:
             e["last"] = (r["ts"], r["price"])
 
@@ -129,7 +131,9 @@ def main():
         exp = dt.datetime.fromisoformat(it["expire"].replace("Z", "+00:00"))
         if exp <= now:
             continue
-        listings.setdefault(it["key"], {"cat": it["cat"], "prices": []})["prices"].append((it["price"], it["count"]))
+        listings.setdefault(it["key"], {"cat": it["cat"], "prices": [], "rows": []})
+        listings[it["key"]]["prices"].append((it["price"], it["count"]))
+        listings[it["key"]]["rows"].append((it["price"], it["count"], it["expire"]))
 
     items = []
     for key in set(by_key) | set(listings):
@@ -149,11 +153,16 @@ def main():
                 row["median"] = weighted_median(h["trades"])
                 prices = [p for p, _ in h["trades"]]
                 row["p25"] = statistics.quantiles(prices, n=4)[0] if n >= 4 else None
+                # 상세 보기용: 일별(KST) 중앙값·체결 건수
+                row["daily"] = [[d, weighted_median(t), len(t)] for d, t in sorted(h["days"].items())]
         if l:
             prices = sorted(l["prices"])
             row["min_listing"] = prices[0][0]
             row["listings"] = len(prices)
             row["listed_qty"] = sum(c for _, c in prices)
+            if h and row.get("median"):
+                # 상세 보기용: 가장 싼 매물 5개 (가격, 수량, 만료)
+                row["cheapest"] = sorted(l["rows"])[:5]
         med = row.get("median")
         if med and row.get("min_listing"):
             row["discount"] = round(1 - row["min_listing"] / med, 4)
