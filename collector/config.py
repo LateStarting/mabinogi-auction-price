@@ -28,7 +28,15 @@ HISTORY_INTERVAL_MIN = 45
 LISTINGS_INTERVAL_MIN = 360
 
 # 하루 호출 예산 (개발 키 한도 1,000건, 여유 50건)
+# 넥슨이 하루를 KST 자정에 끊는지 UTC 자정(KST 09시)에 끊는지 알 수 없어 두 기준 모두 센다.
 DAILY_BUDGET = 950
+# 특정 날짜만 예산을 바꿀 때 ("kst:YYYY-MM-DD" / "utc:YYYY-MM-DD")
+# 2026-11-25: 로컬 테스트로 약 700건 + 이 저장소 첫 실행들로 약 140건을 이미 썼으므로,
+# 이후 이 저장소가 쓸 몫을 KST 기준 누적 250건, UTC 기준(새로 세기 시작) 120건으로 제한
+BUDGET_OVERRIDES = {
+    "kst:2026-11-25": 250,
+    "utc:2026-11-25": 120,
+}
 # 초당 5건 한도 → 호출 간 최소 간격
 MIN_CALL_GAP_SEC = 0.25
 

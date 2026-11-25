@@ -39,17 +39,25 @@ class Client:
         self.last_call = 0.0
         self.calls = 0
 
-    def _budget(self):
-        today = dt.datetime.now(KST).date().isoformat()
-        b = self.state.setdefault("budget", {"date": today, "used": 0})
-        if b["date"] != today:
-            b.update(date=today, used=0)
-        return b
+    def _budgets(self):
+        """KST 하루와 UTC 하루 두 기준의 사용량. 둘 중 하나라도 예산을 넘으면 멈춘다."""
+        now = dt.datetime.now(dt.timezone.utc)
+        out = []
+        for name, tz in (("budget", KST), ("budget_utc", dt.timezone.utc)):
+            today = now.astimezone(tz).date().isoformat()
+            b = self.state.setdefault(name, {"date": today, "used": 0})
+            if b["date"] != today:
+                b.update(date=today, used=0)
+            prefix = "kst" if tz is KST else "utc"
+            limit = config.BUDGET_OVERRIDES.get(f"{prefix}:{today}", config.DAILY_BUDGET)
+            out.append((b, limit, prefix))
+        return out
 
     def get(self, endpoint, **params):
-        b = self._budget()
-        if b["used"] >= config.DAILY_BUDGET:
-            raise BudgetExceeded(f"오늘 호출 예산 소진 ({b['used']}/{config.DAILY_BUDGET})")
+        budgets = self._budgets()
+        for b, limit, prefix in budgets:
+            if b["used"] >= limit:
+                raise BudgetExceeded(f"호출 예산 소진 ({prefix} {b['date']}: {b['used']}/{limit})")
         q = urllib.parse.urlencode({k: v for k, v in params.items() if v})
         req = urllib.request.Request(BASE + endpoint + "?" + q, headers={"x-nxopen-api-key": self.key})
         for attempt in range(4):
@@ -57,7 +65,8 @@ class Client:
             if wait > 0:
                 time.sleep(wait)
             self.last_call = time.time()
-            b["used"] += 1
+            for b, _, _ in budgets:
+                b["used"] += 1
             self.calls += 1
             try:
                 with urllib.request.urlopen(req, timeout=30) as r:
@@ -278,7 +287,7 @@ def main():
     finally:
         report["pruned_days"] = prune(data)
         report["calls"] = client.calls
-        report["budget"] = state.get("budget")
+        report["budget"] = {"kst": state.get("budget"), "utc": state.get("budget_utc")}
         with open(state_path, "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False, indent=1)
     print(json.dumps(report, ensure_ascii=False))
