@@ -27,6 +27,7 @@
   td:first-child { white-space:normal; min-width:220px; }
   th { position:sticky; top:0; background:var(--card); font-weight:600; cursor:pointer; user-select:none; color:var(--mute); font-size:12px; }
   th.on { color:var(--ink); }
+  th .period { display:block; font-weight:400; font-size:11px; color:var(--mute); }
   tr:last-child td { border-bottom:none; }
   .cat { color:var(--mute); font-size:12px; }
   .pos { color:var(--good); font-weight:600; }
@@ -57,12 +58,12 @@
       <thead><tr>
         <th data-k="key">아이템</th>
         <th data-k="cat">카테고리</th>
-        <th data-k="median">시세(중앙값)</th>
-        <th data-k="min_listing">최저 매물가</th>
+        <th data-k="median">시세(중앙값)<span class="period p-hist"></span></th>
+        <th data-k="min_listing">최저 매물가<span class="period">현재</span></th>
         <th data-k="discount">시세 대비</th>
-        <th data-k="trades">체결 건수</th>
-        <th data-k="volume">체결 수량</th>
-        <th data-k="listed_qty">매물 수량</th>
+        <th data-k="trades">체결 건수<span class="period p-hist"></span></th>
+        <th data-k="volume">체결 수량<span class="period p-hist"></span></th>
+        <th data-k="listed_qty">매물 수량<span class="period">현재</span></th>
         <th data-k="last_price">최근 체결가</th>
       </tr></thead>
       <tbody id="rows"></tbody>
@@ -71,7 +72,7 @@
 </main>
 <footer>
   <p>Data based on NEXON Open API. 데이터는 NEXON Open API 경매장 정보를 기반으로 하며, 게임 데이터는 평균 10분 늦게 반영됩니다.</p>
-  <p>시세는 최근 7일 체결가의 수량 가중 중앙값이며, 체결 5건 미만인 품목은 표시하지 않습니다. 색상·품질 등 값에 영향을 주는 옵션은 별도 품목으로 구분합니다.</p>
+  <p>시세·체결 건수·체결 수량은 최근 7일(수집 초기에는 수집을 시작한 뒤 쌓인 기간) 누적이고, 최저 매물가·매물 수량은 마지막 매물 수집 시점 기준입니다. 시세는 체결가의 수량 가중 중앙값이며, 체결 5건 미만인 품목은 표시하지 않습니다. 색상·품질 등 값에 영향을 주는 옵션은 별도 품목으로 구분합니다.</p>
   <p>"저평가 매물"은 최저 매물가가 시세 × (1 − 수수료 가정치) × (1 − 10%) 이하인 경우입니다. 수수료율은 가정값이며, 이미 팔린 매물일 수 있습니다.</p>
   <p>이 사이트는 비영리 개인 프로젝트이며 넥슨과 관련이 없습니다. 원본 데이터는 30일 이내로만 보관합니다.</p>
 </footer>
@@ -136,8 +137,12 @@ document.querySelectorAll('th').forEach(th => th.addEventListener('click', () =>
 
 fetch('prices.json', { cache: 'no-store' }).then(r => r.json()).then(d => {
   DATA = d;
+  // 체결 집계 기간: 최대 baseline_days, 수집 초기에는 실제로 쌓인 기간만큼
+  const span = Math.min(d.history_days, d.params.baseline_days);
+  const spanText = span < 1 ? `최근 ${Math.max(1, Math.round(span * 24))}시간` : `최근 ${span >= d.params.baseline_days ? d.params.baseline_days : span.toFixed(1)}일`;
+  document.querySelectorAll('.p-hist').forEach(e => e.textContent = spanText);
   document.getElementById('meta').textContent =
-    `시세 갱신 ${timeKST(d.generated_at)} · 매물 수집 ${timeKST(d.listings_at)} · 체결 ${d.trade_rows.toLocaleString('ko-KR')}건 (최근 ${d.params.baseline_days}일 기준)`;
+    `시세 갱신 ${timeKST(d.generated_at)} · 매물 수집 ${timeKST(d.listings_at)} · 체결 ${d.trade_rows.toLocaleString('ko-KR')}건 (${spanText} 누적)`;
   if (d.history_days < d.params.baseline_days) {
     const w = document.getElementById('warmup');
     w.hidden = false;
