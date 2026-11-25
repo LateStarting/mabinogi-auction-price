@@ -44,6 +44,20 @@ Data based on NEXON Open API.
   - 행을 누르면 상세: 최근 체결 가격 차트(점 = 체결 1건, 점 크기 = 수량, 시세·최저 매물 기준선), 일별 시세, 최근 체결 10건, 가장 싼 매물 5개.
 - **최근 체결**: 전체 품목의 최신 체결 300건과 시세 대비.
 - **NPC 상점 효율**: 화폐(두카트·골드·인장·솔방울)별 효율 순위. "이 표 읽는 법" 안내, 화폐별 기준 환율, 주목 배지, 등급(A/B/C), 행을 누르면 근거(✔)·주의(⚠).
+- **인챈트 본전**: 인챈트 스크롤(랭크별)마다 성공 1회 기대 재료비, 장비 소모 개수, 본전 판매가. 바탕 장비 가격을 넣으면 줄마다 계산. 평일/목요일 확률 전환.
+
+### 인챈트 본전 계산 (`aggregate.py`의 `build_enchant`)
+
+| 항목 | 규칙 |
+|---|---|
+| 랭크 | 경매장 아이템 옵션 "인챈트 종류"의 `랭크 X`에서 추출(`collect.py`의 `enchant_rank`). 체결·매물 행에 `rank`로 저장 |
+| 가격 | 스크롤: 체결 시세, 없으면 최저 매물. 마법가루: `ENCHANT_POWDER`(고대의 마법가루)의 시세 또는 최저 매물 |
+| 성공률 | `ENCHANT_RATES` 평일/목요일, 지력 200 이상 기준. 팬 정리 자료(나무위키, biketago)라 게임 안 확률과 대조 필요 |
+| 기대 재료비 | (스크롤 + 마법가루) ÷ 성공률. 시도 1회 = 스크롤 1장 + 마법가루 1개로 가정 |
+| 장비 소모 | 실패 시 인챈트 불가 랭크(`ENCHANT_RUIN_RANKS` 3·2·1)와 미확인 랭크(`ENCHANT_PENALTY_UNKNOWN` 6·5·4)는 1 ÷ 성공률개, 나머지는 1개 |
+| 본전 판매가 | (기대 재료비 + 장비 가격 × 장비 소모) ÷ (1 − 수수료) |
+
+옵션 수치가 랜덤이라 성공해도 판매가는 보장되지 않습니다. 인챈트된 장비의 시세는 이 표에 없습니다(같은 장비라도 옵션 조합이 너무 많음).
 
 ### NPC 효율 판정 규칙 (`aggregate.py`의 `assess`)
 
@@ -68,6 +82,7 @@ Data based on NEXON Open API.
 | `items[]` | 품목별 `median`, `min_listing`, `discount`, `trades`, `volume`, `per_day`, `listed_qty`, `last_price`, `last_ts`, 저평가 `deal_count`/`deal_profit`. 시세가 있으면 상세용 `daily`(일별 중앙값), `recent`(최근 10건), `chart`(최근 최대 60건, `[유닉스 분, 가격, 수량]`), `cheapest`(가장 싼 매물 5개) |
 | `recent[]` | 최신 체결 300건 `[시각, 품목, 카테고리, 가격, 수량, 시세]` |
 | `npc` | `rates`(화폐별 기준 환율), `rules`(판정 기준값), `items[]`: `unit_price`, `value`, `basis`(시세/최저 매물), `gold_per` 또는 `profit`/`ratio`, `vs_rate`, `grade`, `hot`, `why[]`, `warn[]`, `listings`, `trades` |
+| `enchant` | `powder`, `powder_price`, `powder_basis`, `fee_rate`, `rates`, `ruin_ranks`, `unknown_ranks`, `items[]`: `key`, `rank`, `scroll`, `scroll_basis`, `p_wd`/`p_th`, `cost_wd`/`cost_th`, `items_wd`/`items_th`, `ruin`, `penalty_unknown` |
 
 상세용 데이터 개수는 `aggregate.py`의 `RECENT_PER_ITEM`, `RECENT_FEED`, `CHART_POINTS`로 조정합니다(현재 집계본 약 1.2MB).
 
