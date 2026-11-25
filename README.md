@@ -12,8 +12,8 @@ Data based on NEXON Open API.
 |---|---|
 | `collector/config.py` | 대상 카테고리, 수집 주기, 호출 예산, NPC 설정, 계산 기준 |
 | `collector/collect.py` | 수집. 우선순위: 거래 내역 → 현재 매물 → NPC 상점 → NPC 품목 경매장 이름 조회 |
-| `collector/aggregate.py` | 수집 데이터를 `site/prices.json`으로 집계 (`items` + `npc`) |
-| `site/index.html` | 정적 페이지. 탭: 경매장 시세 / NPC 상점 효율 (`#npc`) |
+| `collector/aggregate.py` | 수집 데이터를 `site/prices.json`으로 집계 (`items` + `recent` + `npc`) |
+| `site/index.html` | 정적 페이지. 탭: 경매장 시세 / 최근 체결 (`#recent`) / NPC 상점 효율 (`#npc`) |
 | `.github/workflows/collect.yml` | 15분 cron + `main` 푸시 + 수동 실행. build job → deploy job |
 
 마비노기 경매장은 전 서버 통합이라 서버 구분 없이 집계합니다.
@@ -37,6 +37,23 @@ Data based on NEXON Open API.
 - 저평가 매물: 매물가 ≤ 시세 × (1 − `FEE_RATE`) × (1 − `MIN_MARGIN`). `FEE_RATE` 5%는 가정값.
 - NPC 효율: 경매장 가격(시세 있으면 시세, 없으면 최저 매물가) × 묶음 수량 × (1 − 수수료) ÷ NPC 가격 = 화폐 1개당 골드. 골드 판매품은 차익.
 - 채널마다 바뀌는 NPC 탭(주머니, 한정상품)은 제외 — 서비스 단계 키가 있어야 채널 전체를 돌 수 있음.
+
+## 화면
+
+- **경매장 시세**: 품목별 시세·최저 매물가·시세 대비·체결 건수/수량·매물 수량·최근 체결(가격 · N분 전). 검색, 카테고리, 체결 있는 품목만, 저평가만 필터.
+  - 행을 누르면 상세: 최근 체결 가격 차트(점 = 체결 1건, 점 크기 = 수량, 시세·최저 매물 기준선), 일별 시세, 최근 체결 10건, 가장 싼 매물 5개.
+- **최근 체결**: 전체 품목의 최신 체결 300건과 시세 대비.
+- **NPC 상점 효율**: 화폐(두카트·골드·인장·솔방울)별 효율 순위. 경매장 매물 3개 미만은 흐리게.
+
+## prices.json 구조
+
+| 키 | 내용 |
+|---|---|
+| `items[]` | 품목별 `median`, `min_listing`, `discount`, `trades`, `volume`, `per_day`, `listed_qty`, `last_price`, `last_ts`, 저평가 `deal_count`/`deal_profit`. 시세가 있으면 상세용 `daily`(일별 중앙값), `recent`(최근 10건), `chart`(최근 최대 60건, `[유닉스 분, 가격, 수량]`), `cheapest`(가장 싼 매물 5개) |
+| `recent[]` | 최신 체결 300건 `[시각, 품목, 카테고리, 가격, 수량, 시세]` |
+| `npc` | NPC 품목별 `unit_price`, `value`, `basis`(시세/최저 매물), `gold_per` 또는 `profit`, `listings` |
+
+상세용 데이터 개수는 `aggregate.py`의 `RECENT_PER_ITEM`, `RECENT_FEED`, `CHART_POINTS`로 조정합니다(현재 집계본 약 1.2MB).
 
 ## 처음 설정
 
