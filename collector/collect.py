@@ -6,6 +6,8 @@ data 디렉터리 구조
   state.json                      호출 예산·마지막 수집 시각
   history/YYYY-MM-DD.jsonl.gz     체결 내역 (KST 날짜별, auction_buy_id 중복 제거)
   listings_latest.json.gz         가장 최근 매물 스냅샷
+  npc_latest.json                 NPC 상점 고정 품목 스냅샷 (하루 1회)
+  lookup.json                     NPC 품목별 경매장 최저 매물가 (이름 조회)
 """
 import argparse
 import datetime as dt
@@ -22,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import config  # noqa: E402
 
-BASE = "https://open.api.nexon.com/mabinogi/v1/auction/"
+BASE = "https://open.api.nexon.com/mabinogi/v1/"
 KST = dt.timezone(dt.timedelta(hours=9))
 
 
@@ -73,7 +75,7 @@ class Client:
     def sweep(self, endpoint, category, list_key):
         cursor, out = None, []
         while True:
-            d = self.get(endpoint, auction_item_category=category, cursor=cursor)
+            d = self.get("auction/" + endpoint, auction_item_category=category, cursor=cursor)
             out.extend(d.get(list_key) or [])
             cursor = d.get("next_cursor")
             if not cursor:
@@ -164,6 +166,70 @@ def collect_listings(client, data):
     return len(rows)
 
 
+def collect_npc(client, data):
+    """NPC 상점 고정 품목 스냅샷 (서버·채널 1곳, 채널별로 바뀌는 탭 제외)."""
+    rows = []
+    for npc in config.NPC_NAMES:
+        d = client.get("npcshop/list", npc_name=npc, server_name=config.NPC_SERVER, channel=config.NPC_CHANNEL)
+        for tab in d.get("shop") or []:
+            if tab["tab_name"] in config.NPC_EXCLUDE_TABS:
+                continue
+            for it in tab["item"]:
+                for p in it.get("price") or []:
+                    rows.append({
+                        "npc": npc,
+                        "tab": tab["tab_name"],
+                        "name": it["item_display_name"],
+                        "count": it.get("item_count") or 1,
+                        "currency": p["price_type"],
+                        "price": p["price_value"],
+                        "limit_type": it.get("limit_type"),
+                        "limit_value": it.get("limit_value"),
+                    })
+    snap = {"collected_at": dt.datetime.now(dt.timezone.utc).isoformat(), "items": rows}
+    with open(data / "npc_latest.json", "w", encoding="utf-8") as f:
+        json.dump(snap, f, ensure_ascii=False)
+    return len(rows)
+
+
+def collect_lookups(client, data):
+    """NPC 품목을 경매장에서 이름으로 조회해 최저 매물가를 기록. 주기가 된 품목만, 한 번에 일부씩."""
+    snap = load_json(data / "npc_latest.json", None)
+    if not snap:
+        return 0
+    path = data / "lookup.json"
+    lookup = load_json(path, {})
+    names = sorted({r["name"] for r in snap["items"]})
+    lookup = {k: v for k, v in lookup.items() if k in names}
+
+    def due(name):
+        e = lookup.get(name)
+        if not e:
+            return True
+        wait = config.LOOKUP_INTERVAL_MIN if e["n"] else config.LOOKUP_EMPTY_RETRY_MIN
+        return minutes_since(e["checked_at"]) >= wait - 2
+
+    todo = sorted((n for n in names if due(n)), key=lambda n: lookup.get(n, {}).get("checked_at", ""))
+    done = 0
+    try:
+        for name in todo[: config.LOOKUP_PER_RUN]:
+            d = client.get("auction/list", item_name=name)
+            items = d.get("auction_item") or []
+            prices = sorted(it["auction_price_per_unit"] for it in items)
+            lookup[name] = {
+                "checked_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "n": len(items),
+                "more": bool(d.get("next_cursor")),
+                "lowest": prices[:5],
+                "category": items[0]["auction_item_category"] if items else None,
+            }
+            done += 1
+    finally:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(lookup, f, ensure_ascii=False)
+    return done
+
+
 def prune(data):
     cutoff = (dt.datetime.now(KST) - dt.timedelta(days=config.RETENTION_DAYS)).date().isoformat()
     removed = 0
@@ -177,7 +243,7 @@ def prune(data):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
-    ap.add_argument("--force", choices=["history", "listings", "both"], help="주기와 상관없이 실행")
+    ap.add_argument("--force", choices=["history", "listings", "both", "npc", "all"], help="주기와 상관없이 실행")
     args = ap.parse_args()
 
     key = os.environ.get("NEXON_API_KEY")
@@ -190,9 +256,12 @@ def main():
     client = Client(key, state)
     now = dt.datetime.now(dt.timezone.utc).isoformat()
 
-    do_hist = args.force in ("history", "both") or minutes_since(state.get("last_history")) >= config.HISTORY_INTERVAL_MIN - 2
-    do_list = args.force in ("listings", "both") or minutes_since(state.get("last_listings")) >= config.LISTINGS_INTERVAL_MIN - 2
+    f = args.force
+    do_hist = f in ("history", "both", "all") or minutes_since(state.get("last_history")) >= config.HISTORY_INTERVAL_MIN - 2
+    do_list = f in ("listings", "both", "all") or minutes_since(state.get("last_listings")) >= config.LISTINGS_INTERVAL_MIN - 2
+    do_npc = f in ("npc", "all") or minutes_since(state.get("last_npc")) >= config.NPC_INTERVAL_MIN - 2
     report = {}
+    # 우선순위: 거래 내역(놓치면 복구 불가) → 매물 → NPC 상점 → 이름 조회
     try:
         if do_hist:
             report["history_added"] = collect_history(client, data)
@@ -200,6 +269,10 @@ def main():
         if do_list:
             report["listings"] = collect_listings(client, data)
             state["last_listings"] = now
+        if do_npc:
+            report["npc_items"] = collect_npc(client, data)
+            state["last_npc"] = now
+        report["lookups"] = collect_lookups(client, data)
     except BudgetExceeded as e:
         report["stopped"] = str(e)
     finally:

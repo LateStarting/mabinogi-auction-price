@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>마비노기 경매장 시세표</title>
-<meta name="description" content="NEXON Open API 경매장 데이터로 만든 마비노기 경매장 품목별 시세(최근 7일 체결 중앙값)와 최저 매물가">
+<meta name="description" content="NEXON Open API 경매장 데이터로 만든 마비노기 경매장 품목별 시세(최근 7일 체결 중앙값), 최저 매물가, NPC 상점 두카트 효율">
 <style>
   :root { --bg:#f7f6f3; --card:#fff; --ink:#1f2328; --mute:#6b7280; --line:#e5e3de; --acc:#2f6f5e; --good:#1f7a4d; --bad:#b42318; }
   @media (prefers-color-scheme: dark) {
@@ -15,11 +15,14 @@
   header, main, footer { max-width:1100px; margin:0 auto; padding:16px; }
   h1 { font-size:22px; margin:8px 0 4px; }
   .sub { color:var(--mute); font-size:13px; }
+  .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); margin:4px 0 12px; }
+  .tabs button { background:none; border:none; border-bottom:2px solid transparent; padding:8px 14px; font:inherit; color:var(--mute); cursor:pointer; }
+  .tabs button.on { color:var(--ink); border-bottom-color:var(--acc); font-weight:600; }
   .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:12px 0; }
   input[type=search], select { padding:7px 10px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); font:inherit; }
   input[type=search] { flex:1 1 220px; }
   label.chk { display:flex; gap:6px; align-items:center; color:var(--mute); }
-  .notice { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-size:13px; color:var(--mute); }
+  .notice { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-size:13px; color:var(--mute); margin-bottom:8px; }
   .wrap { background:var(--card); border:1px solid var(--line); border-radius:8px; overflow-x:auto; }
   table { border-collapse:collapse; width:100%; min-width:760px; }
   th, td { padding:8px 10px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; }
@@ -29,14 +32,17 @@
   th.on { color:var(--ink); }
   th .period { display:block; font-weight:400; font-size:11px; color:var(--mute); }
   tr:last-child td { border-bottom:none; }
+  tr.thin td { opacity:.55; }
   .cat { color:var(--mute); font-size:12px; }
   .pos { color:var(--good); font-weight:600; }
   .neg { color:var(--bad); }
   .deal { display:inline-block; margin-left:6px; padding:0 6px; border-radius:4px; background:var(--good); color:#fff; font-size:11px; }
+  .tag { display:inline-block; margin-left:6px; padding:0 6px; border-radius:4px; border:1px solid var(--line); color:var(--mute); font-size:11px; }
   .muted { color:var(--mute); }
   .count { margin:8px 2px; color:var(--mute); font-size:12px; }
   footer { color:var(--mute); font-size:12px; }
   footer p { margin:4px 0; }
+  [hidden] { display:none !important; }
 </style>
 </head>
 <body>
@@ -45,43 +51,79 @@
   <div class="sub" id="meta">불러오는 중…</div>
 </header>
 <main>
-  <div class="notice" id="warmup" hidden></div>
-  <div class="controls">
-    <input type="search" id="q" placeholder="아이템 이름 검색 (예: 고급 가죽, 인챈트 스크롤 - 곤란의)">
-    <select id="cat"><option value="">전체 카테고리</option></select>
-    <label class="chk"><input type="checkbox" id="traded" checked> 체결 기록 있는 품목만</label>
-    <label class="chk"><input type="checkbox" id="deals"> 저평가 매물만</label>
-  </div>
-  <div class="count" id="count"></div>
-  <div class="wrap">
-    <table>
-      <thead><tr>
-        <th data-k="key">아이템</th>
-        <th data-k="cat">카테고리</th>
-        <th data-k="median">시세(중앙값)<span class="period p-hist"></span></th>
-        <th data-k="min_listing">최저 매물가<span class="period">현재</span></th>
-        <th data-k="discount">시세 대비</th>
-        <th data-k="trades">체결 건수<span class="period p-hist"></span></th>
-        <th data-k="volume">체결 수량<span class="period p-hist"></span></th>
-        <th data-k="listed_qty">매물 수량<span class="period">현재</span></th>
-        <th data-k="last_price">최근 체결가</th>
-      </tr></thead>
-      <tbody id="rows"></tbody>
-    </table>
-  </div>
+  <nav class="tabs">
+    <button data-view="market" class="on">경매장 시세</button>
+    <button data-view="npc">NPC 상점 효율</button>
+  </nav>
+
+  <section id="view-market">
+    <div class="notice" id="warmup" hidden></div>
+    <div class="controls">
+      <input type="search" id="q" placeholder="아이템 이름 검색 (예: 고급 가죽, 인챈트 스크롤 - 곤란의)">
+      <select id="cat"><option value="">전체 카테고리</option></select>
+      <label class="chk"><input type="checkbox" id="traded" checked> 체결 기록 있는 품목만</label>
+      <label class="chk"><input type="checkbox" id="deals"> 저평가 매물만</label>
+    </div>
+    <div class="count" id="count"></div>
+    <div class="wrap">
+      <table id="t-market">
+        <thead><tr>
+          <th data-k="key">아이템</th>
+          <th data-k="cat">카테고리</th>
+          <th data-k="median">시세(중앙값)<span class="period p-hist"></span></th>
+          <th data-k="min_listing">최저 매물가<span class="period">현재</span></th>
+          <th data-k="discount">시세 대비</th>
+          <th data-k="trades">체결 건수<span class="period p-hist"></span></th>
+          <th data-k="volume">체결 수량<span class="period p-hist"></span></th>
+          <th data-k="listed_qty">매물 수량<span class="period">현재</span></th>
+          <th data-k="last_price">최근 체결가</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="view-npc" hidden>
+    <div class="notice" id="npc-note"></div>
+    <div class="controls">
+      <input type="search" id="nq" placeholder="아이템 이름 검색">
+      <select id="ncur"></select>
+      <label class="chk"><input type="checkbox" id="nthick" checked> 경매장 매물 3개 이상만</label>
+      <label class="chk"><input type="checkbox" id="nvalued" checked> 경매장 가격 있는 품목만</label>
+    </div>
+    <div class="count" id="ncount"></div>
+    <div class="wrap">
+      <table id="t-npc">
+        <thead><tr>
+          <th data-k="name">아이템</th>
+          <th data-k="tab">파는 곳</th>
+          <th data-k="price">NPC 가격</th>
+          <th data-k="unit_price">경매장 가격<span class="period">개당</span></th>
+          <th data-k="value">경매장 가치<span class="period">묶음 기준</span></th>
+          <th data-k="eff" id="eff-th">효율</th>
+          <th data-k="listings_n">경매장 매물</th>
+          <th data-k="limit">구매 제한</th>
+        </tr></thead>
+        <tbody id="nrows"></tbody>
+      </table>
+    </div>
+  </section>
 </main>
 <footer>
-  <p>Data based on NEXON Open API. 데이터는 NEXON Open API 경매장 정보를 기반으로 하며, 게임 데이터는 평균 10분 늦게 반영됩니다. 마비노기 경매장은 전 서버(류트·만돌린·하프·울프) 통합이라 서버 구분 없이 집계합니다.</p>
+  <p>Data based on NEXON Open API. 데이터는 NEXON Open API 경매장·NPC 상점 정보를 기반으로 하며, 게임 데이터는 평균 10분 늦게 반영됩니다. 마비노기 경매장은 전 서버(류트·만돌린·하프·울프) 통합이라 서버 구분 없이 집계합니다.</p>
   <p>시세·체결 건수·체결 수량은 최근 7일(수집 초기에는 수집을 시작한 뒤 쌓인 기간) 누적이고, 최저 매물가·매물 수량은 마지막 매물 수집 시점 기준입니다. 시세는 체결가의 수량 가중 중앙값이며, 체결 5건 미만인 품목은 표시하지 않습니다. 색상·품질 등 값에 영향을 주는 옵션은 별도 품목으로 구분합니다.</p>
   <p>"저평가 매물"은 최저 매물가가 시세 × (1 − 수수료 가정치) × (1 − 10%) 이하인 경우입니다. 수수료율은 가정값이며, 이미 팔린 매물일 수 있습니다.</p>
   <p>이 사이트는 비영리 개인 프로젝트이며 넥슨과 관련이 없습니다. 원본 데이터는 30일 이내로만 보관합니다.</p>
 </footer>
 <script>
 const fmt = n => n == null ? '' : Math.round(n).toLocaleString('ko-KR');
+const fmt2 = n => n == null ? '' : n >= 100 ? fmt(n) : n > 0 && n < 0.01 ? '0.01 미만' : n.toLocaleString('ko-KR', { maximumFractionDigits: 2 });
 const pct = d => d == null ? '' : (d > 0 ? '−' : '+') + Math.abs(d * 100).toFixed(1) + '%';
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let DATA = null, sortKey = null, sortDir = -1;
+const $ = id => document.getElementById(id);
+let DATA = null;
 const LIMIT = 500;
+const sorts = { market: { key: null, dir: -1 }, npc: { key: 'eff', dir: -1 } };
 
 // 모든 시각은 한국 시간(KST)으로 표기: "11/25 21:07"
 function timeKST(iso) {
@@ -92,28 +134,31 @@ function timeKST(iso) {
   return `${p.month}/${p.day} ${p.hour}:${p.minute}`;
 }
 
-function render() {
-  const q = document.getElementById('q').value.trim().toLowerCase();
-  const cat = document.getElementById('cat').value;
-  const traded = document.getElementById('traded').checked;
-  const deals = document.getElementById('deals').checked;
+function sortRows(rows, s) {
+  if (!s.key) return rows;
+  return rows.slice().sort((a, b) => {
+    const x = a[s.key], y = b[s.key];
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return (typeof x === 'string' ? x.localeCompare(y, 'ko') : x - y) * s.dir;
+  });
+}
+
+function renderMarket() {
+  const q = $('q').value.trim().toLowerCase();
+  const cat = $('cat').value;
+  const traded = $('traded').checked;
+  const deals = $('deals').checked;
   let rows = DATA.items.filter(r =>
     (!q || r.key.toLowerCase().includes(q)) &&
     (!cat || r.cat === cat) &&
     (!traded || r.median != null) &&
     (!deals || r.deal_count));
-  if (sortKey) {
-    rows = rows.slice().sort((a, b) => {
-      const x = a[sortKey], y = b[sortKey];
-      if (x == null && y == null) return 0;
-      if (x == null) return 1;
-      if (y == null) return -1;
-      return (typeof x === 'string' ? x.localeCompare(y, 'ko') : x - y) * sortDir;
-    });
-  }
-  document.getElementById('count').textContent =
+  rows = sortRows(rows, sorts.market);
+  $('count').textContent =
     `${rows.length.toLocaleString('ko-KR')}개 품목` + (rows.length > LIMIT ? ` (상위 ${LIMIT}개 표시, 검색으로 좁혀 보세요)` : '');
-  document.getElementById('rows').innerHTML = rows.slice(0, LIMIT).map(r => {
+  $('rows').innerHTML = rows.slice(0, LIMIT).map(r => {
     const d = r.discount;
     const cls = d == null ? '' : d >= 0.05 ? 'pos' : d < 0 ? 'neg' : '';
     return `<tr>
@@ -130,14 +175,65 @@ function render() {
   }).join('');
 }
 
-document.querySelectorAll('th').forEach(th => th.addEventListener('click', () => {
-  const k = th.dataset.k;
-  sortDir = sortKey === k ? -sortDir : (k === 'key' || k === 'cat' ? 1 : -1);
-  sortKey = k;
-  document.querySelectorAll('th').forEach(t => t.classList.toggle('on', t === th));
-  render();
-}));
-['q', 'cat', 'traded', 'deals'].forEach(id => document.getElementById(id).addEventListener('input', render));
+function renderNpc() {
+  const N = DATA.npc;
+  if (!N) { $('ncount').textContent = 'NPC 상점 데이터가 아직 없습니다.'; return; }
+  const q = $('nq').value.trim().toLowerCase();
+  const cur = $('ncur').value;
+  const thick = $('nthick').checked;
+  const valued = $('nvalued').checked;
+  const gold = cur === '골드';
+  $('eff-th').innerHTML = gold
+    ? '차익<span class="period">경매장 순수익 − NPC 가격</span>'
+    : `${esc(cur)} 1개당 골드<span class="period">수수료 뺀 경매장 가치 ÷ 가격</span>`;
+  let rows = N.items.filter(r =>
+    r.currency === cur &&
+    (!q || r.name.toLowerCase().includes(q)) &&
+    (!valued || r.value != null) &&
+    (!thick || r.basis === '시세' || (r.listings_n || 0) >= 3));
+  rows = sortRows(rows, sorts.npc);
+  $('ncount').textContent = `${rows.length}개 품목 · 경매장 조회 ${N.checked}/${N.total}개 완료`;
+  $('nrows').innerHTML = rows.map(r => {
+    const thin = r.basis !== '시세' && (r.listings_n || 0) < 3;
+    const where = r.npcs.length > 3 ? `${esc(r.npcs[0])} 외 ${r.npcs.length - 1}명` : r.npcs.map(esc).join(', ');
+    const eff = gold
+      ? (r.profit != null ? `<span class="${r.profit > 0 ? 'pos' : 'neg'}">${fmt(r.profit)}</span>` : '')
+      : (r.gold_per != null ? `<b>${fmt2(r.gold_per)}</b>` : '');
+    return `<tr class="${thin ? 'thin' : ''}">
+      <td>${esc(r.name)}${r.count > 1 ? ` <span class="muted">×${r.count}</span>` : ''}${r.basis ? `<span class="tag" title="경매장 가격 기준">${r.basis}</span>` : ''}${r.tradable === false ? '<span class="tag">경매장 매물 없음</span>' : ''}</td>
+      <td class="cat">${where}<br>${esc(r.tab)}</td>
+      <td>${fmt(r.price)} <span class="muted">${esc(r.currency)}</span></td>
+      <td>${fmt(r.unit_price)}</td>
+      <td>${fmt(r.value)}</td>
+      <td>${eff}</td>
+      <td>${r.listings != null ? esc(String(r.listings)) : '<span class="muted">조회 전</span>'}</td>
+      <td class="muted">${r.limit ? esc(r.limit) : ''}</td>
+    </tr>`;
+  }).join('');
+}
+
+function setupSort(tableId, view, render) {
+  document.querySelectorAll(`#${tableId} th`).forEach(th => th.addEventListener('click', () => {
+    const k = th.dataset.k, s = sorts[view];
+    s.dir = s.key === k ? -s.dir : (['key', 'cat', 'name', 'tab', 'limit'].includes(k) ? 1 : -1);
+    s.key = k;
+    document.querySelectorAll(`#${tableId} th`).forEach(t => t.classList.toggle('on', t === th));
+    render();
+  }));
+}
+
+function show(view) {
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
+  $('view-market').hidden = view !== 'market';
+  $('view-npc').hidden = view !== 'npc';
+  if (location.hash !== '#' + view) history.replaceState(null, '', view === 'market' ? location.pathname : '#' + view);
+}
+document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => show(b.dataset.view)));
+
+setupSort('t-market', 'market', renderMarket);
+setupSort('t-npc', 'npc', renderNpc);
+['q', 'cat', 'traded', 'deals'].forEach(id => $(id).addEventListener('input', renderMarket));
+['nq', 'ncur', 'nthick', 'nvalued'].forEach(id => $(id).addEventListener('input', renderNpc));
 
 fetch('prices.json', { cache: 'no-store' }).then(r => r.json()).then(d => {
   DATA = d;
@@ -145,17 +241,29 @@ fetch('prices.json', { cache: 'no-store' }).then(r => r.json()).then(d => {
   const span = Math.min(d.history_days, d.params.baseline_days);
   const spanText = span < 1 ? `최근 ${Math.max(1, Math.round(span * 24))}시간` : `최근 ${span >= d.params.baseline_days ? d.params.baseline_days : span.toFixed(1)}일`;
   document.querySelectorAll('.p-hist').forEach(e => e.textContent = spanText);
-  document.getElementById('meta').textContent =
+  $('meta').textContent =
     `시세 갱신 ${timeKST(d.generated_at)} · 매물 수집 ${timeKST(d.listings_at)} · 체결 ${d.trade_rows.toLocaleString('ko-KR')}건 (${spanText} 누적)`;
   if (d.history_days < d.params.baseline_days) {
-    const w = document.getElementById('warmup');
+    const w = $('warmup');
     w.hidden = false;
     w.textContent = `수집을 시작한 지 ${d.history_days < 1 ? Math.round(d.history_days * 24) + '시간' : d.history_days.toFixed(1) + '일'}째입니다. 시세는 ${d.params.baseline_days}일치가 쌓일 때까지 점점 정확해집니다.`;
   }
-  const sel = document.getElementById('cat');
-  d.categories.forEach(c => sel.insertAdjacentHTML('beforeend', `<option>${esc(c)}</option>`));
-  render();
-}).catch(() => { document.getElementById('meta').textContent = '데이터를 불러오지 못했습니다.'; });
+  d.categories.forEach(c => $('cat').insertAdjacentHTML('beforeend', `<option>${esc(c)}</option>`));
+
+  if (d.npc) {
+    d.npc.items.forEach(r => { r.listings_n = typeof r.listings === 'string' ? parseInt(r.listings) : r.listings; r.eff = r.currency === '골드' ? r.profit : r.gold_per; });
+    const order = ['두카트', '골드', '모험가의 인장', '금박 솔방울'];
+    const curs = [...new Set(d.npc.items.map(r => r.currency))].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
+    curs.forEach(c => $('ncur').insertAdjacentHTML('beforeend', `<option value="${esc(c)}">${esc(c)}${c === '골드' ? ' (NPC에서 사서 경매장에 팔기)' : ' 효율'}</option>`));
+    $('npc-note').textContent =
+      `NPC 상점 고정 품목을 경매장 가격과 비교합니다 (NPC 상점 ${timeKST(d.npc.collected_at)} 기준, ${d.npc.server} ${d.npc.channel}채널). ` +
+      `채널마다 바뀌는 ${d.npc.excluded_tabs.join('·')} 탭은 제외했습니다. 경매장 가격은 시세(체결 중앙값)가 있으면 시세, 없으면 현재 최저 매물가입니다. ` +
+      `NPC에서 산 물건이 다시 거래 가능한지는 아이템마다 다르니 게임에서 확인하세요. 흐리게 표시된 줄은 경매장 매물이 3개 미만이라 가격을 믿기 어렵습니다.`;
+  }
+  renderMarket();
+  renderNpc();
+  show(location.hash === '#npc' ? 'npc' : 'market');
+}).catch(e => { $('meta').textContent = '데이터를 불러오지 못했습니다.'; console.error(e); });
 </script>
 </body>
 </html>

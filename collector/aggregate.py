@@ -41,6 +41,61 @@ def weighted_median(pairs):
     return None
 
 
+def build_npc(data, market):
+    """NPC 상점 품목별 경매장 가치와 화폐 1개당 골드(효율)."""
+    snap_path, lookup_path = data / "npc_latest.json", data / "lookup.json"
+    if not snap_path.exists():
+        return None
+    with open(snap_path, encoding="utf-8") as f:
+        snap = json.load(f)
+    lookup = {}
+    if lookup_path.exists():
+        with open(lookup_path, encoding="utf-8") as f:
+            lookup = json.load(f)
+
+    rows = {}
+    for it in snap["items"]:
+        k = (it["name"], it["currency"], it["price"], it["count"])
+        r = rows.get(k)
+        if r:
+            if it["npc"] not in r["npcs"]:
+                r["npcs"].append(it["npc"])
+            continue
+        r = rows[k] = {
+            "name": it["name"], "tab": it["tab"], "npcs": [it["npc"]], "count": it["count"],
+            "currency": it["currency"], "price": it["price"],
+            "limit": f'{it["limit_type"]} {it["limit_value"]}개' if it.get("limit_type") else None,
+        }
+        m = market.get(it["name"])
+        lk = lookup.get(it["name"])
+        unit, basis = None, None
+        if m and m.get("median"):
+            unit, basis = m["median"], "시세"
+        elif lk and lk["n"]:
+            unit, basis = lk["lowest"][0], "최저 매물"
+        if lk:
+            r["listings"] = lk["n"] if not lk.get("more") else f'{lk["n"]}+'
+            r["checked_at"] = lk["checked_at"]
+            r["tradable"] = lk["n"] > 0 or (m is not None)
+        if unit:
+            value = unit * it["count"]
+            net = value * (1 - config.FEE_RATE)
+            r.update(unit_price=unit, basis=basis, value=value)
+            if it["currency"] == "골드":
+                r["profit"] = int(net - it["price"])
+                r["ratio"] = round(net / it["price"], 3) if it["price"] else None
+            else:
+                r["gold_per"] = round(net / it["price"], 3) if it["price"] else None
+    out = sorted(rows.values(), key=lambda r: -(r.get("gold_per") or r.get("ratio") or 0))
+    return {
+        "collected_at": snap["collected_at"],
+        "server": config.NPC_SERVER, "channel": config.NPC_CHANNEL,
+        "excluded_tabs": sorted(config.NPC_EXCLUDE_TABS),
+        "checked": len(lookup), "total": len({r["name"] for r in out}),
+        "items": out,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
@@ -110,6 +165,7 @@ def main():
         items.append(row)
 
     items.sort(key=lambda r: (-(r.get("deal_profit") or 0), -(r.get("trades") or 0)))
+    npc = build_npc(data, {r["key"]: r for r in items})
     out = {
         "generated_at": now.isoformat(),
         "listings_at": snap.get("collected_at"),
@@ -125,6 +181,7 @@ def main():
             "min_margin": config.MIN_MARGIN,
         },
         "items": items,
+        "npc": npc,
     }
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
