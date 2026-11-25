@@ -16,20 +16,15 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: collect
   cancel-in-progress: false
 
 jobs:
-  run:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -43,7 +38,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: data
-          key: mabi-data-${{ github.run_id }}
+          key: mabi-data-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: mabi-data-
 
       - name: Collect
@@ -61,11 +56,21 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: data
-          key: mabi-data-${{ github.run_id }}
+          key: mabi-data-${{ github.run_id }}-${{ github.run_attempt }}
 
-      - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
       - id: deploy
         uses: actions/deploy-pages@v4
