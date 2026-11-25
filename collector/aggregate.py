@@ -194,6 +194,58 @@ def assess(rows):
     return rates
 
 
+RANK_ORDER = "FEDCBA987654321"
+
+
+def build_enchant(market, ranks):
+    """인챈트 스크롤별 '성공 1번에 드는 기대 재료비'와 실패 시 장비 손실 배수.
+
+    가정: 시도 1회 = 스크롤 1장 + 마법가루 1개. 성공할 때까지 반복(기하분포) →
+      기대 시도 횟수 = 1/p, 기대 재료비 = (스크롤 + 마법가루) / p.
+    실패하면 더 이상 인챈트 불가인 랭크는 실패마다 바탕 장비를 새로 구해야 하므로
+      기대 장비 소모 = 1/p개 (성공한 1개 포함). 그 외 랭크는 장비 1개(실패 시 내구도만 감소).
+    본전 판매가(인챈트된 장비) = (기대 재료비 + 장비가 × 장비 소모) / (1 − 수수료).
+    """
+    powder = market.get(config.ENCHANT_POWDER) or {}
+    powder_price = powder.get("median") or powder.get("min_listing")
+    powder_basis = "시세" if powder.get("median") else ("최저 매물" if powder.get("min_listing") else None)
+    rows = []
+    for key, rank in ranks.items():
+        m = market.get(key)
+        if not m:
+            continue
+        scroll = m.get("median") or m.get("min_listing")
+        if not scroll:
+            continue
+        row = {
+            "key": key, "rank": rank,
+            "scroll": scroll, "scroll_basis": "시세" if m.get("median") else "최저 매물",
+            "scroll_trades": m.get("trades"), "scroll_listings": m.get("listings"),
+            "ruin": rank in config.ENCHANT_RUIN_RANKS,
+            "penalty_unknown": rank in config.ENCHANT_PENALTY_UNKNOWN,
+        }
+        if powder_price:
+            per_try = scroll + powder_price
+            for day, table in config.ENCHANT_RATES.items():
+                p = table.get(rank)
+                if not p:
+                    continue
+                tag = "wd" if day == "평일" else "th"
+                row[f"p_{tag}"] = p
+                row[f"cost_{tag}"] = int(round(per_try / p))
+                # 장비 소모 개수: 장비를 잃는 랭크(미확인 포함)는 1/p, 아니면 1
+                row[f"items_{tag}"] = round(1 / p, 2) if (row["ruin"] or row["penalty_unknown"]) else 1
+        rows.append(row)
+    rows.sort(key=lambda r: (RANK_ORDER.index(r["rank"]) if r["rank"] in RANK_ORDER else 99, r["key"]))
+    return {
+        "powder": config.ENCHANT_POWDER, "powder_price": powder_price, "powder_basis": powder_basis,
+        "fee_rate": config.FEE_RATE,
+        "rates": config.ENCHANT_RATES,
+        "ruin_ranks": sorted(config.ENCHANT_RUIN_RANKS), "unknown_ranks": sorted(config.ENCHANT_PENALTY_UNKNOWN),
+        "items": rows,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
@@ -210,7 +262,10 @@ def main():
         span_days = max(span.total_seconds() / 86400, 1 / 24)
 
     by_key = {}
+    ranks = {}  # 인챈트 스크롤 키 → 랭크
     for r in hist:
+        if r.get("rank"):
+            ranks[r["key"]] = r["rank"]
         e = by_key.setdefault(r["key"], {"cat": r["cat"], "trades": [], "last": None, "days": {}, "recent": []})
         e["trades"].append((r["price"], r["count"]))
         e["recent"].append((r["ts"], r["price"], r["count"]))
@@ -230,6 +285,8 @@ def main():
         exp = dt.datetime.fromisoformat(it["expire"].replace("Z", "+00:00"))
         if exp <= now:
             continue
+        if it.get("rank"):
+            ranks[it["key"]] = it["rank"]
         listings.setdefault(it["key"], {"cat": it["cat"], "prices": [], "rows": []})
         listings[it["key"]]["prices"].append((it["price"], it["count"]))
         listings[it["key"]]["rows"].append((it["price"], it["count"], it["expire"]))
@@ -303,6 +360,7 @@ def main():
         },
         "items": items,
         "npc": npc,
+        "enchant": build_enchant({r["key"]: r for r in items}, ranks),
         "recent": recent_feed,
     }
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)

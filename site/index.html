@@ -89,6 +89,7 @@
     <button data-view="market" class="on">경매장 시세</button>
     <button data-view="recent">최근 체결</button>
     <button data-view="npc">NPC 상점 효율</button>
+    <button data-view="enchant">인챈트 본전</button>
   </nav>
 
   <section id="view-market">
@@ -138,6 +139,42 @@
           <th data-k="6">시세 대비</th>
         </tr></thead>
         <tbody id="rrows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="view-enchant" hidden>
+    <details class="notice guide" open>
+      <summary><b>이 표 읽는 법</b> — 인챈트를 "성공시키는 데" 평균 얼마가 드는지와, 인챈트된 장비를 얼마 이상에 팔아야 본전인지</summary>
+      <ol>
+        <li><b>성공 1회 기대 재료비</b> = (스크롤 + <span id="e-powder"></span>) ÷ 성공 확률. 실패하면 다시 사서 시도한다고 보고, 평균적으로 드는 재료비입니다.</li>
+        <li><b>장비 소모</b>: 실패하면 "더 이상 인챈트 불가"가 되는 랭크(<span id="e-ruin"></span>)는 실패할 때마다 바탕 장비를 새로 사야 해서 평균 1 ÷ 성공 확률 개가 듭니다. 랭크 <span id="e-unk"></span>는 실패 페널티를 아직 확인 못 해 같은 방식(보수적)으로 계산합니다. 그 위 랭크는 실패해도 내구도만 깎여 장비 1개로 봅니다.</li>
+        <li><b>본전 판매가</b> = (기대 재료비 + 장비 가격 × 장비 소모) ÷ (1 − 수수료 <span id="e-fee"></span>%). 아래 "바탕 장비 가격"을 넣으면 줄마다 계산합니다. 인챈트된 장비가 이 값보다 비싸게 팔려야 남습니다.</li>
+        <li><b>가정</b>: 시도 1회 = 스크롤 1장 + 마법가루 1개(보수적), 지력 200 이상, 인챈트 위탁·이벤트 보너스 없음. 성공률은 팬 정리 자료(나무위키, biketago) 기준이라 게임 안 확률과 대조가 필요합니다. 성공해도 옵션 수치는 랜덤이라 판매가가 달라질 수 있습니다.</li>
+      </ol>
+    </details>
+    <div class="notice" id="e-head"></div>
+    <div class="controls">
+      <input type="search" id="eq" placeholder="스크롤 이름 검색 (예: 곤란의)">
+      <select id="erank"><option value="">전체 랭크</option></select>
+      <select id="eday"><option value="wd">평일 확률</option><option value="th">목요일 확률</option></select>
+      <label class="chk">바탕 장비 가격 <input type="number" id="ebase" min="0" step="1000" placeholder="0" style="width:120px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)"></label>
+      <label class="chk"><input type="checkbox" id="etraded"> 스크롤 체결 시세 있는 것만</label>
+    </div>
+    <div class="count" id="ecount"></div>
+    <div class="wrap">
+      <table id="t-enchant">
+        <thead><tr>
+          <th data-k="key">인챈트 스크롤</th>
+          <th data-k="rank_n">랭크</th>
+          <th data-k="scroll">스크롤 가격</th>
+          <th data-k="p">성공 확률</th>
+          <th data-k="cost">성공 1회 기대 재료비</th>
+          <th data-k="items">장비 소모</th>
+          <th data-k="be">본전 판매가<span class="period">장비 가격 반영</span></th>
+          <th data-k="penalty">실패 시</th>
+        </tr></thead>
+        <tbody id="erows"></tbody>
       </table>
     </div>
   </section>
@@ -197,7 +234,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':
 const $ = id => document.getElementById(id);
 let DATA = null;
 const LIMIT = 500;
-const sorts = { market: { key: null, dir: -1 }, npc: { key: 'eff', dir: -1 }, recent: { key: null, dir: -1 } };
+const sorts = { market: { key: null, dir: -1 }, npc: { key: 'eff', dir: -1 }, recent: { key: null, dir: -1 }, enchant: { key: null, dir: 1 } };
 
 // 모든 시각은 한국 시간(KST)으로 표기: "11/25 21:07"
 function timeKST(iso) {
@@ -409,6 +446,41 @@ function renderNpc() {
       </ul></td></tr>` : ''}`;
   }).join('');
 }
+const RANK_ORDER = 'FEDCBA987654321';
+function renderEnchant() {
+  const E = DATA.enchant;
+  if (!E || !E.items.length) { $('ecount').textContent = '인챈트 스크롤 랭크 데이터가 아직 없습니다 (다음 수집 후 표시).'; return; }
+  const q = $('eq').value.trim().toLowerCase();
+  const rk = $('erank').value;
+  const day = $('eday').value;
+  const base = parseFloat($('ebase').value) || 0;
+  const traded = $('etraded').checked;
+  const fee = E.fee_rate;
+  let rows = E.items.filter(r => (!q || r.key.toLowerCase().includes(q)) && (!rk || r.rank === rk) && (!traded || r.scroll_basis === '시세'))
+    .map(r => {
+      const cost = r['cost_' + day], items = r['items_' + day];
+      return Object.assign({}, r, {
+        p: r['p_' + day], cost, items,
+        be: cost != null ? Math.round((cost + base * items) / (1 - fee)) : null,
+        rank_n: RANK_ORDER.indexOf(r.rank),
+        penalty: r.ruin ? '인챈트 불가' : r.penalty_unknown ? '미확인' : '내구도 감소',
+      });
+    });
+  rows = sortRows(rows, sorts.enchant);
+  $('ecount').textContent = `${rows.length}종` + (rows.length > LIMIT ? ` (상위 ${LIMIT}개 표시)` : '');
+  $('erows').innerHTML = rows.slice(0, LIMIT).map(r => `<tr class="${r.scroll_basis !== '시세' ? '' : ''}">
+      <td>${esc(r.key)}</td>
+      <td class="cat"><span class="grade">${esc(r.rank)}</span></td>
+      <td>${fmt(r.scroll)} <span class="tag" title="스크롤 가격 기준">${r.scroll_basis}</span></td>
+      <td>${r.p != null ? Math.round(r.p * 100) + '%' : ''}</td>
+      <td><b>${fmt(r.cost)}</b></td>
+      <td class="${r.items > 1 ? 'neg' : 'muted'}">${r.items != null ? (r.items > 1 ? r.items.toFixed(2) + '개' : '1개') : ''}</td>
+      <td>${base ? `<b>${fmt(r.be)}</b>` : `<span class="muted" title="바탕 장비 가격을 넣으면 계산">${fmt(r.be)}+</span>`}</td>
+      <td class="${r.ruin ? 'neg' : 'muted'}">${r.penalty}</td>
+    </tr>`).join('');
+}
+['eq', 'erank', 'eday', 'ebase', 'etraded'].forEach(id => $(id).addEventListener('input', renderEnchant));
+
 const NOPEN = new Set();
 $('nrows').addEventListener('click', e => {
   const tr = e.target.closest('tr.nitem');
@@ -430,7 +502,7 @@ function setupSort(tableId, view, render) {
 
 function show(view) {
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
-  ['market', 'recent', 'npc'].forEach(v => $('view-' + v).hidden = view !== v);
+  ['market', 'recent', 'npc', 'enchant'].forEach(v => $('view-' + v).hidden = view !== v);
   if (location.hash !== '#' + view) history.replaceState(null, '', view === 'market' ? location.pathname : '#' + view);
 }
 document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => show(b.dataset.view)));
@@ -438,6 +510,7 @@ document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click
 setupSort('t-market', 'market', renderMarket);
 setupSort('t-npc', 'npc', renderNpc);
 setupSort('t-recent', 'recent', renderRecent);
+setupSort('t-enchant', 'enchant', renderEnchant);
 ['rq', 'rcat'].forEach(id => $(id).addEventListener('input', renderRecent));
 ['q', 'cat', 'traded', 'deals'].forEach(id => $(id).addEventListener('input', renderMarket));
 ['nq', 'ncur', 'nhot', 'nthick', 'nvalued'].forEach(id => $(id).addEventListener('input', renderNpc));
@@ -482,10 +555,23 @@ fetch('prices.json', { cache: 'no-store' }).then(r => r.json()).then(d => {
       `채널마다 바뀌는 ${d.npc.excluded_tabs.join('·')} 탭은 제외했습니다. 경매장 가격은 시세(체결 중앙값)가 있으면 시세, 없으면 현재 최저 매물가입니다. ` +
       `NPC에서 산 물건이 다시 거래 가능한지는 아이템마다 다르니 게임에서 확인하세요. 흐리게 표시된 줄은 경매장 매물이 3개 미만이라 가격을 믿기 어렵습니다.`;
   }
+  if (d.enchant) {
+    const E = d.enchant;
+    $('e-powder').textContent = E.powder;
+    $('e-ruin').textContent = E.ruin_ranks.join('·');
+    $('e-unk').textContent = E.unknown_ranks.join('·');
+    $('e-fee').textContent = Math.round(E.fee_rate * 100);
+    $('e-head').innerHTML = E.powder_price
+      ? `${esc(E.powder)} 가격: <b>${fmt(E.powder_price)}골드</b> (${E.powder_basis}). 시도 1회 비용 = 스크롤 + 이 가격.`
+      : `${esc(E.powder)} 가격이 아직 없습니다.`;
+    [...new Set(E.items.map(r => r.rank))].sort((a, b) => RANK_ORDER.indexOf(a) - RANK_ORDER.indexOf(b))
+      .forEach(r => $('erank').insertAdjacentHTML('beforeend', `<option value="${esc(r)}">랭크 ${esc(r)}</option>`));
+  }
   renderMarket();
   renderRecent();
   renderNpc();
-  show(['#npc', '#recent'].includes(location.hash) ? location.hash.slice(1) : 'market');
+  renderEnchant();
+  show(['#npc', '#recent', '#enchant'].includes(location.hash) ? location.hash.slice(1) : 'market');
 }).catch(e => { $('meta').textContent = '데이터를 불러오지 못했습니다.'; console.error(e); });
 </script>
 </body>

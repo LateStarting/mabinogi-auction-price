@@ -14,6 +14,7 @@ import datetime as dt
 import gzip
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -109,6 +110,26 @@ def item_key(it):
     return name + (" [" + ", ".join(sorted(extra)) + "]" if extra else "")
 
 
+_RANK_RE = re.compile(r"랭크\s*([0-9A-F])")
+
+
+def enchant_rank(it):
+    """인챈트 스크롤의 랭크 (옵션 '인챈트 종류' 값 예: '곤란의 (랭크 A)'). 없으면 None."""
+    for o in it.get("item_option") or []:
+        if o.get("option_type") == "인챈트 종류":
+            m = _RANK_RE.search(str(o.get("option_value") or ""))
+            if m:
+                return m.group(1)
+    return None
+
+
+def with_rank(row, it):
+    r = enchant_rank(it)
+    if r:
+        row["rank"] = r
+    return row
+
+
 def load_json(path, default):
     try:
         with open(path, encoding="utf-8") as f:
@@ -143,14 +164,14 @@ def collect_history(client, data, extra=()):
         for h in client.sweep("history", cat, "auction_history"):
             ts = dt.datetime.fromisoformat(h["date_auction_buy"].replace("Z", "+00:00"))
             day = ts.astimezone(KST).date().isoformat()
-            new_rows.setdefault(day, []).append({
+            new_rows.setdefault(day, []).append(with_rank({
                 "id": h["auction_buy_id"],
                 "key": item_key(h),
                 "cat": h["auction_item_category"],
                 "price": h["auction_price_per_unit"],
                 "count": h["item_count"],
                 "ts": ts.isoformat(),
-            })
+            }, h))
     added = 0
     hdir = data / "history"
     hdir.mkdir(parents=True, exist_ok=True)
@@ -176,13 +197,13 @@ def collect_listings(client, data):
     rows = []
     for cat in config.CATEGORIES:
         for it in client.sweep("list", cat, "auction_item"):
-            rows.append({
+            rows.append(with_rank({
                 "key": item_key(it),
                 "cat": it["auction_item_category"],
                 "price": it["auction_price_per_unit"],
                 "count": it["item_count"],
                 "expire": it["date_auction_expire"],
-            })
+            }, it))
     snap = {"collected_at": dt.datetime.now(dt.timezone.utc).isoformat(), "items": rows}
     with gzip.open(data / "listings_latest.json.gz", "wt", encoding="utf-8") as f:
         json.dump(snap, f, ensure_ascii=False)
