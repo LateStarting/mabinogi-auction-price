@@ -28,6 +28,8 @@
   th, td { padding:8px 10px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; }
   th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align:left; }
   td:first-child { white-space:normal; min-width:220px; }
+  #t-recent td:first-child { min-width:0; white-space:nowrap; }
+  #t-recent td:nth-child(2) { white-space:normal; min-width:200px; }
   th { position:sticky; top:0; background:var(--card); font-weight:600; cursor:pointer; user-select:none; color:var(--mute); font-size:12px; }
   th.on { color:var(--ink); }
   th .period { display:block; font-weight:400; font-size:11px; color:var(--mute); }
@@ -44,6 +46,7 @@
   #rows tr.item:hover td { background:color-mix(in srgb, var(--acc) 6%, transparent); }
   tr.detail > td { background:var(--bg); text-align:left; white-space:normal; padding:12px 16px; }
   .detail-grid { display:flex; flex-wrap:wrap; gap:24px; }
+  .chart-box { flex:0 1 460px; min-width:0; }
   .detail-grid h4 { margin:0 0 6px; font-size:12px; color:var(--mute); font-weight:600; }
   .detail-grid table { min-width:0; width:auto; }
   .detail-grid td { padding:2px 12px 2px 0; border:none; background:none; text-align:right; line-height:1.4; }
@@ -70,6 +73,7 @@
 <main>
   <nav class="tabs">
     <button data-view="market" class="on">경매장 시세</button>
+    <button data-view="recent">최근 체결</button>
     <button data-view="npc">NPC 상점 효율</button>
   </nav>
 
@@ -94,9 +98,32 @@
           <th data-k="per_day" class="hide-sm" id="perday-th" hidden>하루 평균 체결</th>
           <th data-k="volume" class="hide-sm">체결 수량<span class="period p-hist"></span></th>
           <th data-k="listed_qty" class="hide-sm">매물 수량<span class="period">현재</span></th>
-          <th data-k="last_price" class="hide-sm">최근 체결가</th>
+          <th data-k="last_ts" class="hide-sm">최근 체결<span class="period">가격 · 시각</span></th>
         </tr></thead>
         <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="view-recent" hidden>
+    <div class="notice" id="recent-note"></div>
+    <div class="controls">
+      <input type="search" id="rq" placeholder="아이템 이름 검색">
+      <select id="rcat"><option value="">전체 카테고리</option></select>
+    </div>
+    <div class="count" id="rcount"></div>
+    <div class="wrap">
+      <table id="t-recent">
+        <thead><tr>
+          <th data-k="0">체결 시각</th>
+          <th data-k="1">아이템</th>
+          <th data-k="2" class="hide-sm">카테고리</th>
+          <th data-k="3">체결가<span class="period">개당</span></th>
+          <th data-k="4">수량</th>
+          <th data-k="5" class="hide-sm">시세<span class="period p-hist"></span></th>
+          <th data-k="6">시세 대비</th>
+        </tr></thead>
+        <tbody id="rrows"></tbody>
       </table>
     </div>
   </section>
@@ -141,7 +168,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':
 const $ = id => document.getElementById(id);
 let DATA = null;
 const LIMIT = 500;
-const sorts = { market: { key: null, dir: -1 }, npc: { key: 'eff', dir: -1 } };
+const sorts = { market: { key: null, dir: -1 }, npc: { key: 'eff', dir: -1 }, recent: { key: null, dir: -1 } };
 
 // 모든 시각은 한국 시간(KST)으로 표기: "11/25 21:07"
 function timeKST(iso) {
@@ -192,7 +219,7 @@ function renderMarket() {
       ${perDay ? `<td class="hide-sm">${r.per_day != null ? fmt2(r.per_day) : ''}</td>` : ''}
       <td class="hide-sm">${fmt(r.volume)}</td>
       <td class="hide-sm">${fmt(r.listed_qty)}</td>
-      <td class="muted hide-sm">${fmt(r.last_price)}</td>
+      <td class="muted hide-sm">${r.last_price != null ? `${fmt(r.last_price)} · <span title="${timeKST(r.last_ts)}">${ago(r.last_ts)}</span>` : ''}</td>
     </tr>${open ? detailRow(r) : ''}`;
   }).join('');
   CURRENT = rows;
@@ -210,6 +237,41 @@ function sparkline(daily) {
     <polyline fill="none" stroke="currentColor" stroke-width="2" points="${pts.map(q => q.join(',')).join(' ')}"/>
     ${pts.map(q => `<circle cx="${q[0]}" cy="${q[1]}" r="2.5" fill="currentColor"/>`).join('')}</svg>`;
 }
+// 최근 체결 가격 차트: 체결 하나 = 점 (크기 = 수량), 시세·최저 매물가 기준선
+function tradeChart(r) {
+  const pts = r.chart;
+  if (!pts || pts.length < 2) return '';
+  const W = 460, H = 200, L = 64, R = 12, T = 12, B = 28;
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const refs = [r.median, r.min_listing].filter(v => v != null);
+  let lo = Math.min(...ys, ...refs), hi = Math.max(...ys, ...refs);
+  const pad = (hi - lo) * 0.08 || hi * 0.05 || 1; lo -= pad; hi += pad;
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), xspan = x1 - x0 || 1;
+  const X = v => L + (v - x0) / xspan * (W - L - R);
+  const Y = v => T + (hi - v) / (hi - lo) * (H - T - B);
+  const maxC = Math.max(...pts.map(p => p[2]));
+  const rad = c => 2.5 + 3.5 * Math.sqrt(c / maxC);
+  const kst = m => timeKST(new Date(m * 60000).toISOString());
+  const ticksY = [lo + pad, (lo + hi) / 2, hi - pad];
+  const ticksX = [x0, Math.round((x0 + x1) / 2), x1];
+  // 두 기준선이 가까우면 두 번째 라벨은 선 아래에
+  const close = r.median != null && r.min_listing != null && Math.abs(Y(r.median) - Y(r.min_listing)) < 12;
+  const line = (v, label, dash, below) => v == null ? '' :
+    `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="currentColor" stroke-dasharray="${dash}" opacity=".7"/>
+     <text x="${W - R}" y="${below ? Y(v) + 12 : Y(v) - 4}" text-anchor="end" font-size="10" fill="currentColor">${label} ${fmt(v)}</text>`;
+  return `<div class="chart-box"><h4>최근 체결 가격 ${pts.length}건 (점 크기 = 수량)</h4>
+  <svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="최근 체결 가격 차트" style="max-width:${W}px;display:block;color:var(--mute)">
+    <line x1="${L}" x2="${L}" y1="${T}" y2="${H - B}" stroke="var(--line)"/>
+    <line x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}" stroke="var(--line)"/>
+    ${ticksY.map(v => `<text x="${L - 6}" y="${Y(v) + 3}" text-anchor="end" font-size="10" fill="currentColor">${fmt(v)}</text>`).join('')}
+    ${ticksX.map((v, i) => `<text x="${X(v)}" y="${H - 8}" text-anchor="${['start', 'middle', 'end'][i]}" font-size="10" fill="currentColor">${kst(v)}</text>`).join('')}
+    ${line(r.median, '시세', '5 4', close && r.median < r.min_listing)}
+    ${line(r.min_listing, '최저 매물', '2 3', close && r.min_listing <= r.median)}
+    <polyline fill="none" stroke="var(--acc)" stroke-width="1" opacity=".35" points="${pts.map(p => `${X(p[0])},${Y(p[1])}`).join(' ')}"/>
+    ${pts.map(p => `<circle cx="${X(p[0])}" cy="${Y(p[1])}" r="${rad(p[2])}" fill="var(--acc)" fill-opacity=".75"><title>${kst(p[0])} · ${fmt(p[1])} × ${p[2]}</title></circle>`).join('')}
+  </svg></div>`;
+}
+
 function detailRow(r) {
   const cols = $('t-market').querySelectorAll('thead th:not([hidden])').length;
   const daily = r.daily ? `<div><h4>일별 시세 (KST)</h4>${sparkline(r.daily)}
@@ -218,7 +280,33 @@ function detailRow(r) {
     <table>${r.cheapest.map(c => `<tr><td>${fmt(c[0])}</td><td class="muted">×${c[1]}</td>
       <td class="${r.median && c[0] <= r.median * (1 - DATA.params.fee_rate) * (1 - DATA.params.min_margin) ? 'pos' : 'muted'}">${r.median ? pct(1 - c[0] / r.median) : ''}</td>
       <td class="muted">만료 ${timeKST(c[2])}</td></tr>`).join('')}</table></div>` : '';
-  return `<tr class="detail"><td colspan="${cols}"><div class="detail-grid">${daily}${cheap}</div></td></tr>`;
+  const recent = r.recent ? `<div><h4>최근 체결 ${r.recent.length}건</h4>
+    <table>${r.recent.map(t => `<tr><td class="muted">${timeKST(t[0])}</td><td>${fmt(t[1])}</td><td class="muted">×${t[2]}</td>
+      <td class="muted">${r.median ? pct(1 - t[1] / r.median) : ''}</td></tr>`).join('')}</table></div>` : '';
+  return `<tr class="detail"><td colspan="${cols}"><div class="detail-grid">${tradeChart(r)}${daily}${recent}${cheap}</div></td></tr>`;
+}
+
+function renderRecent() {
+  const R = DATA.recent || [];
+  const q = $('rq').value.trim().toLowerCase();
+  const cat = $('rcat').value;
+  let rows = R.filter(t => (!q || t[1].toLowerCase().includes(q)) && (!cat || t[2] === cat))
+    .map(t => [t[0], t[1], t[2], t[3], t[4], t[5], t[5] ? 1 - t[3] / t[5] : null]);
+  rows = sortRows(rows, sorts.recent);
+  $('rcount').textContent = `${rows.length}건`;
+  $('rrows').innerHTML = rows.map(t => {
+    const d = t[6];
+    const cls = d == null ? '' : d >= 0.05 ? 'pos' : d <= -0.05 ? 'neg' : '';
+    return `<tr>
+      <td class="muted">${timeKST(t[0])} <span class="cat">${ago(t[0])}</span></td>
+      <td>${esc(t[1])}</td>
+      <td class="cat hide-sm">${esc(t[2])}</td>
+      <td>${fmt(t[3])}</td>
+      <td>${fmt(t[4])}</td>
+      <td class="muted hide-sm">${fmt(t[5])}</td>
+      <td class="${cls}">${pct(d)}</td>
+    </tr>`;
+  }).join('');
 }
 $('rows').addEventListener('click', e => {
   const tr = e.target.closest('tr.item');
@@ -284,14 +372,15 @@ function setupSort(tableId, view, render) {
 
 function show(view) {
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
-  $('view-market').hidden = view !== 'market';
-  $('view-npc').hidden = view !== 'npc';
+  ['market', 'recent', 'npc'].forEach(v => $('view-' + v).hidden = view !== v);
   if (location.hash !== '#' + view) history.replaceState(null, '', view === 'market' ? location.pathname : '#' + view);
 }
 document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => show(b.dataset.view)));
 
 setupSort('t-market', 'market', renderMarket);
 setupSort('t-npc', 'npc', renderNpc);
+setupSort('t-recent', 'recent', renderRecent);
+['rq', 'rcat'].forEach(id => $(id).addEventListener('input', renderRecent));
 ['q', 'cat', 'traded', 'deals'].forEach(id => $(id).addEventListener('input', renderMarket));
 ['nq', 'ncur', 'nthick', 'nvalued'].forEach(id => $(id).addEventListener('input', renderNpc));
 
@@ -310,7 +399,11 @@ fetch('prices.json', { cache: 'no-store' }).then(r => r.json()).then(d => {
     w.hidden = false;
     w.textContent = `수집을 시작한 지 ${d.history_days < 1 ? Math.round(d.history_days * 24) + '시간' : d.history_days.toFixed(1) + '일'}째입니다. 시세는 ${d.params.baseline_days}일치가 쌓일 때까지 점점 정확해집니다.`;
   }
-  d.categories.forEach(c => $('cat').insertAdjacentHTML('beforeend', `<option>${esc(c)}</option>`));
+  d.categories.forEach(c => {
+    $('cat').insertAdjacentHTML('beforeend', `<option>${esc(c)}</option>`);
+    $('rcat').insertAdjacentHTML('beforeend', `<option>${esc(c)}</option>`);
+  });
+  $('recent-note').textContent = `수집 대상 ${d.categories.length}개 카테고리의 최신 체결 ${(d.recent || []).length}건입니다. 거래 내역은 45분마다 모으고, 게임 데이터는 평균 10분 늦게 반영됩니다. 시세 대비가 +이면 시세보다 비싸게, −이면 싸게 팔린 거래입니다.`;
 
   if (d.npc) {
     d.npc.items.forEach(r => { r.listings_n = typeof r.listings === 'string' ? parseInt(r.listings) : r.listings; r.eff = r.currency === '골드' ? r.profit : r.gold_per; });
@@ -323,8 +416,9 @@ fetch('prices.json', { cache: 'no-store' }).then(r => r.json()).then(d => {
       `NPC에서 산 물건이 다시 거래 가능한지는 아이템마다 다르니 게임에서 확인하세요. 흐리게 표시된 줄은 경매장 매물이 3개 미만이라 가격을 믿기 어렵습니다.`;
   }
   renderMarket();
+  renderRecent();
   renderNpc();
-  show(location.hash === '#npc' ? 'npc' : 'market');
+  show(['#npc', '#recent'].includes(location.hash) ? location.hash.slice(1) : 'market');
 }).catch(e => { $('meta').textContent = '데이터를 불러오지 못했습니다.'; console.error(e); });
 </script>
 </body>

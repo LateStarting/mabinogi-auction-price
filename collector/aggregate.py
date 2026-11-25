@@ -14,6 +14,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 import config  # noqa: E402
 
 KST = dt.timezone(dt.timedelta(hours=9))
+RECENT_PER_ITEM = 10   # 행 상세에 보여 줄 품목별 최근 체결 수
+RECENT_FEED = 300      # 최근 체결 탭에 보여 줄 전체 최신 체결 수
+CHART_POINTS = 60      # 행 상세 차트에 찍을 품목별 최근 체결 수
 
 
 def load_history(data, days):
@@ -113,8 +116,9 @@ def main():
 
     by_key = {}
     for r in hist:
-        e = by_key.setdefault(r["key"], {"cat": r["cat"], "trades": [], "last": None, "days": {}})
+        e = by_key.setdefault(r["key"], {"cat": r["cat"], "trades": [], "last": None, "days": {}, "recent": []})
         e["trades"].append((r["price"], r["count"]))
+        e["recent"].append((r["ts"], r["price"], r["count"]))
         day = dt.datetime.fromisoformat(r["ts"]).astimezone(KST).strftime("%m/%d")
         e["days"].setdefault(day, []).append((r["price"], r["count"]))
         if e["last"] is None or r["ts"] > e["last"][0]:
@@ -155,6 +159,12 @@ def main():
                 row["p25"] = statistics.quantiles(prices, n=4)[0] if n >= 4 else None
                 # 상세 보기용: 일별(KST) 중앙값·체결 건수
                 row["daily"] = [[d, weighted_median(t), len(t)] for d, t in sorted(h["days"].items())]
+                # 상세 보기용: 최근 체결 10건 (시각, 가격, 수량)
+                latest = sorted(h["recent"], reverse=True)
+                row["recent"] = latest[:RECENT_PER_ITEM]
+                # 상세 차트용: 최근 체결 최대 60건, [유닉스 분, 가격, 수량] (용량 줄이려고 숫자만)
+                row["chart"] = [[int(dt.datetime.fromisoformat(t).timestamp() // 60), p, c]
+                                for t, p, c in reversed(latest[:CHART_POINTS])]
         if l:
             prices = sorted(l["prices"])
             row["min_listing"] = prices[0][0]
@@ -175,6 +185,11 @@ def main():
 
     items.sort(key=lambda r: (-(r.get("deal_profit") or 0), -(r.get("trades") or 0)))
     npc = build_npc(data, {r["key"]: r for r in items})
+
+    # 최근 체결 탭: 전체 품목의 최신 체결 (시각, 품목, 카테고리, 가격, 수량, 시세)
+    med_of = {r["key"]: r.get("median") for r in items}
+    feed = sorted(hist, key=lambda r: r["ts"], reverse=True)[:RECENT_FEED]
+    recent_feed = [[r["ts"], r["key"], r["cat"], r["price"], r["count"], med_of.get(r["key"])] for r in feed]
     out = {
         "generated_at": now.isoformat(),
         "listings_at": snap.get("collected_at"),
@@ -191,6 +206,7 @@ def main():
         },
         "items": items,
         "npc": npc,
+        "recent": recent_feed,
     }
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
