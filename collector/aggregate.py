@@ -50,6 +50,7 @@ def main():
 
     hist = load_history(data, config.BASELINE_DAYS)
     first_ts = min((r["ts"] for r in hist), default=None)
+    last_ts = max((r["ts"] for r in hist), default=None)
     span_days = 0
     if first_ts:
         span = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(first_ts)
@@ -113,6 +114,8 @@ def main():
         "generated_at": now.isoformat(),
         "listings_at": snap.get("collected_at"),
         "history_days": round(span_days, 2),
+        "history_from": first_ts,   # 집계에 들어간 가장 이른 체결 시각
+        "history_to": last_ts,      # 가장 늦은 체결 시각
         "trade_rows": len(hist),
         "categories": config.CATEGORIES,
         "params": {

@@ -1,6 +1,10 @@
 name: collect-and-deploy
 
 on:
+  # 코드(사이트·수집기) 변경을 바로 배포. 수집은 주기가 된 경우에만 실행되므로 호출이 늘지 않음
+  push:
+    branches: [main]
+    paths: ["site/**", "collector/**", ".github/workflows/**"]
   schedule:
     - cron: "*/15 * * * *"   # 15분마다 깨어나고, 주기가 된 수집만 실행 (collector/config.py)
   workflow_dispatch:
