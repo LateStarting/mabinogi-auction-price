@@ -12,8 +12,8 @@ Data based on NEXON Open API.
 |---|---|
 | `collector/config.py` | 대상 카테고리, 수집 주기, 호출 예산, NPC 설정, 계산 기준 |
 | `collector/collect.py` | 수집. 우선순위: 거래 내역 → 현재 매물 → NPC 상점 → NPC 품목 경매장 이름 조회 |
-| `collector/aggregate.py` | 수집 데이터를 `site/prices.json`으로 집계 (`items` + `recent` + `npc`) |
-| `site/index.html` | 정적 페이지. 탭: 경매장 시세 / 최근 체결 (`#recent`) / NPC 상점 효율 (`#npc`) |
+| `collector/aggregate.py` | 수집 데이터를 `site/prices.json`으로 집계 (`items` + `recent` + `npc` + `enchant`) |
+| `site/index.html` | 정적 페이지. 탭: 경매장 시세 / 최근 체결 (`#recent`) / NPC 상점 효율 (`#npc`) / 인챈트 본전 (`#enchant`) |
 | `.github/workflows/collect.yml` | 15분 cron + `main` 푸시 + 수동 실행. build job → deploy job |
 
 마비노기 경매장은 전 서버 통합이라 서버 구분 없이 집계합니다.
