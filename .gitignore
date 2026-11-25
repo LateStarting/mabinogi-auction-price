@@ -1,0 +1,4 @@
+.env
+data/
+site/prices.json
+__pycache__/
