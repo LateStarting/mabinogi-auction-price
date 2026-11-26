@@ -99,6 +99,7 @@ def build_npc(data, market):
                 r["gold_per"] = round(net / it["price"], 3) if it["price"] else None
     out = list(rows.values())
     rates = assess(out)
+    apply_checks(out, load_confirmed())
     out.sort(key=lambda r: -(r.get("gold_per") or r.get("ratio") or 0))
     return {
         "collected_at": snap["collected_at"],
@@ -109,6 +110,7 @@ def build_npc(data, market):
         "rules": {
             "highlight_mult": HIGHLIGHT_MULT, "min_listings": MIN_LISTINGS,
             "gold_min_ratio": GOLD_MIN_RATIO, "fee_rate": config.FEE_RATE, "rate_min_n": RATE_MIN_N,
+            "candidate_min_per_day": config.CANDIDATE_MIN_PER_DAY,
         },
         "items": out,
     }
@@ -192,6 +194,40 @@ def assess(rows):
         r["hot"] = bool(hot and grade in ("A", "B"))
         r["why"], r["warn"] = why, warn
     return rates
+
+
+def load_confirmed():
+    p = Path(__file__).parent / "confirmed.json"
+    if not p.exists():
+        return {}
+    with open(p, encoding="utf-8") as f:
+        return json.load(f).get("items", {})
+
+
+def apply_checks(rows, confirmed):
+    """사용자 확인 결과를 붙이고, 골드 판매품은 '무위험에 가까운 후보' 4개 조건을 검사한다."""
+    for r in rows:
+        c = confirmed.get(r["name"])
+        if c:
+            r["confirmed"] = {"tradable": c.get("tradable"), "checked": c.get("checked"), "note": c.get("note")}
+            if c.get("tradable") is False:
+                r["hot"] = False
+                if r.get("warn") is not None:
+                    r["warn"].insert(0, f"게임에서 재거래 불가로 확인됨({c.get('checked') or ''})")
+        if r["currency"] != "골드" or r.get("ratio") is None:
+            continue
+        per_day = r.get("per_day")
+        checks = [
+            ["골드로 구매 제한 없이 삼", not r.get("limit")],
+            [f"체결 중앙값 기준 수수료 뺀 가치 ≥ NPC 가격 × {GOLD_MIN_RATIO}",
+             r.get("basis") == "시세" and r["ratio"] >= GOLD_MIN_RATIO],
+            [f"하루 체결 {config.CANDIDATE_MIN_PER_DAY}건 이상"
+             + (f" (현재 {per_day}건)" if per_day is not None else f" (체결 {r.get('trades') or 0}건, 하루치 미만)"),
+             per_day is not None and per_day >= config.CANDIDATE_MIN_PER_DAY],
+            ["게임에서 재거래 가능 확인", bool(c and c.get("tradable"))],
+        ]
+        r["checks"] = checks
+        r["candidate"] = all(ok for _, ok in checks)
 
 
 RANK_ORDER = "FEDCBA987654321"

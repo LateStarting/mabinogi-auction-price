@@ -1,0 +1,4 @@
+{
+  "_설명": "게임에서 직접 확인한 NPC 품목. tradable: 산 뒤 경매장에 올릴 수 있으면 true, 귀속이면 false. checked: 확인 날짜(KST). note: 메모.",
+  "items": {}
+}

@@ -52,6 +52,9 @@
   .reasons li { margin:2px 0; }
   .reasons .ok::marker { content:"✔ "; color:var(--good); }
   .reasons .ng::marker { content:"⚠ "; color:#c2410c; }
+  .reasons .no::marker { content:"✘ "; color:var(--bad); }
+  .reasons h5 { margin:8px 0 2px -18px; font-size:12px; color:var(--mute); }
+  .cand { display:inline-block; margin-left:6px; padding:0 6px; border-radius:4px; background:var(--good); color:#fff; font-size:11px; font-weight:600; }
   details.guide summary { cursor:pointer; }
   details.guide ol { margin:8px 0 0; padding-left:20px; }
   details.guide li { margin:4px 0; }
@@ -192,11 +195,13 @@
       </ol>
     </details>
     <div class="notice" id="npc-rate"></div>
+    <div class="notice" id="npc-cand"></div>
     <div class="notice" id="npc-note"></div>
     <div class="controls">
       <input type="search" id="nq" placeholder="아이템 이름 검색">
       <select id="ncur"></select>
       <label class="chk"><input type="checkbox" id="nhot"> 주목만</label>
+      <label class="chk"><input type="checkbox" id="ncand"> 후보 조건 다 맞는 것만</label>
       <label class="chk"><input type="checkbox" id="nthick" checked> 경매장 매물 3개 이상만</label>
       <label class="chk"><input type="checkbox" id="nvalued" checked> 경매장 가격 있는 품목만</label>
     </div>
@@ -401,6 +406,7 @@ function renderNpc() {
     ? '차익<span class="period">경매장 순수익 − NPC 가격</span>'
     : `${esc(cur)} 1개당 골드<span class="period">수수료 뺀 경매장 가치 ÷ 가격</span>`;
   const hotOnly = $('nhot').checked;
+  const candOnly = $('ncand').checked;
   const rate = (N.rates || {})[cur];
   $('vs-th').innerHTML = gold ? '배수<span class="period">순가치 ÷ NPC 가격</span>' : '기준 대비<span class="period">기준 환율의 몇 배</span>';
   $('npc-rate').innerHTML = gold
@@ -414,6 +420,7 @@ function renderNpc() {
     r.currency === cur &&
     (!q || r.name.toLowerCase().includes(q)) &&
     (!hotOnly || r.hot) &&
+    (!candOnly || r.candidate) &&
     (!valued || r.value != null) &&
     (!thick || r.basis === '시세' || (r.listings_n || 0) >= 3));
   rows = sortRows(rows, sorts.npc);
@@ -430,7 +437,7 @@ function renderNpc() {
     const open = NOPEN.has(r.name + r.price);
     const gradeTip = { A: '실제 체결 중앙값 기반', B: '최저 매물가 기반, 매물 충분', C: '매물 부족 또는 최저가가 튐 — 믿기 어려움' }[r.grade] || '';
     return `<tr class="nitem ${thin ? 'thin' : ''} ${r.hot ? 'hotrow' : ''}" data-key="${esc(r.name + r.price)}">
-      <td>${r.why ? `<span class="caret">${open ? '▾' : '▸'}</span>` : ''}${esc(r.name)}${r.count > 1 ? ` <span class="muted">×${r.count}</span>` : ''}${r.hot ? '<span class="hot">주목</span>' : ''}${r.basis ? `<span class="tag" title="경매장 가격 기준">${r.basis}</span>` : ''}${r.tradable === false ? '<span class="tag">경매장 매물 없음</span>' : ''}</td>
+      <td>${r.why ? `<span class="caret">${open ? '▾' : '▸'}</span>` : ''}${esc(r.name)}${r.count > 1 ? ` <span class="muted">×${r.count}</span>` : ''}${r.candidate ? '<span class="cand" title="4개 조건 모두 통과">후보</span>' : ''}${r.hot ? '<span class="hot">주목</span>' : ''}${r.confirmed ? `<span class="tag" title="게임에서 확인 ${esc(r.confirmed.checked || '')}${r.confirmed.note ? ' · ' + esc(r.confirmed.note) : ''}">${r.confirmed.tradable ? '재거래 확인' : '재거래 불가'}</span>` : ''}${r.basis ? `<span class="tag" title="경매장 가격 기준">${r.basis}</span>` : ''}${r.tradable === false ? '<span class="tag">경매장 매물 없음</span>' : ''}</td>
       <td class="cat">${where}<br>${esc(r.tab)}</td>
       <td>${fmt(r.price)} <span class="muted">${esc(r.currency)}</span></td>
       <td>${fmt(r.unit_price)}</td>
@@ -443,6 +450,7 @@ function renderNpc() {
     </tr>${open && r.why ? `<tr class="detail"><td colspan="10"><ul class="reasons">
         ${r.why.map(s => `<li class="ok">${esc(s)}</li>`).join('')}
         ${r.warn.map(s => `<li class="ng">${esc(s)}</li>`).join('')}
+        ${r.checks ? `<h5>무위험에 가까운 후보 조건 (${r.checks.filter(c => c[1]).length}/4)</h5>` + r.checks.map(c => `<li class="${c[1] ? 'ok' : 'no'}">${esc(c[0])}</li>`).join('') : ''}
       </ul></td></tr>` : ''}`;
   }).join('');
 }
@@ -513,7 +521,7 @@ setupSort('t-recent', 'recent', renderRecent);
 setupSort('t-enchant', 'enchant', renderEnchant);
 ['rq', 'rcat'].forEach(id => $(id).addEventListener('input', renderRecent));
 ['q', 'cat', 'traded', 'deals'].forEach(id => $(id).addEventListener('input', renderMarket));
-['nq', 'ncur', 'nhot', 'nthick', 'nvalued'].forEach(id => $(id).addEventListener('input', renderNpc));
+['nq', 'ncur', 'nhot', 'ncand', 'nthick', 'nvalued'].forEach(id => $(id).addEventListener('input', renderNpc));
 
 fetch('prices.json', { cache: 'no-store' }).then(r => r.json()).then(d => {
   DATA = d;
@@ -550,6 +558,14 @@ fetch('prices.json', { cache: 'no-store' }).then(r => r.json()).then(d => {
     const order = ['두카트', '골드', '모험가의 인장', '금박 솔방울'];
     const curs = [...new Set(d.npc.items.map(r => r.currency))].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
     curs.forEach(c => $('ncur').insertAdjacentHTML('beforeend', `<option value="${esc(c)}">${esc(c)}${c === '골드' ? ' (NPC에서 사서 경매장에 팔기)' : ' 효율'}</option>`));
+    const cands = d.npc.items.filter(r => r.candidate);
+    const checked = d.npc.items.filter(r => r.checks);
+    const best = checked.slice().sort((a, b) => b.checks.filter(c => c[1]).length - a.checks.filter(c => c[1]).length).slice(0, 3);
+    $('npc-cand').innerHTML = `<b>무위험에 가까운 후보 (NPC에서 골드로 사서 경매장에 팔기): ${cands.length}개</b>` +
+      (cands.length ? ' — ' + cands.map(r => esc(r.name)).join(', ') : '') +
+      `. 조건 4개(구매 제한 없음 · 체결 중앙값 기준 ${rules.gold_min_ratio}배 이상 · 하루 체결 ${rules.candidate_min_per_day ?? 3}건 이상 · 게임에서 재거래 확인)를 모두 넘어야 합니다. ` +
+      (best.length && !cands.length ? `가장 가까운 품목: ${best.map(r => `${esc(r.name)} ${r.checks.filter(c => c[1]).length}/4`).join(', ')}. ` : '') +
+      `골드 탭에서 행을 누르면 조건별 통과 여부가 보입니다. 재거래 확인은 게임에서 직접 해 보고 알려 주면 반영합니다.`;
     $('npc-note').textContent =
       `NPC 상점 고정 품목을 경매장 가격과 비교합니다 (NPC 상점 ${timeKST(d.npc.collected_at)} 기준, ${d.npc.server} ${d.npc.channel}채널). ` +
       `채널마다 바뀌는 ${d.npc.excluded_tabs.join('·')} 탭은 제외했습니다. 경매장 가격은 시세(체결 중앙값)가 있으면 시세, 없으면 현재 최저 매물가입니다. ` +

@@ -92,3 +92,8 @@ ENCHANT_PENALTY_UNKNOWN = {"6", "5", "4"}
 NPC_HISTORY_FROM = "2026-11-26"   # 이 날짜(KST)부터 적용 (11-25는 호출 한도 때문에 보류)
 NPC_HISTORY_MAX_CATS = 4          # 추가할 카테고리 최대 개수
 NPC_HISTORY_MIN_LISTINGS = 3      # 이만큼 매물이 있는 NPC 품목의 카테고리만 대상
+
+# --- 무위험에 가까운 후보 (NPC 골드 판매품 → 경매장) ---
+# 네 조건을 모두 만족해야 "후보": ① 골드로 구매 제한 없이 삼 ② 체결 중앙값 기준 배수 ≥ GOLD_MIN_RATIO
+# ③ 하루 체결 CANDIDATE_MIN_PER_DAY건 이상 ④ 게임에서 재거래 가능 확인(collector/confirmed.json)
+CANDIDATE_MIN_PER_DAY = 3
