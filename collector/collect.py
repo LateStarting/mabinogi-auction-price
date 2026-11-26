@@ -158,9 +158,16 @@ def npc_extra_categories(data):
     return [c for c, _ in sorted(counts.items(), key=lambda x: -x[1])[: config.NPC_HISTORY_MAX_CATS]]
 
 
-def collect_history(client, data, extra=()):
+def now_iso():
+    return dt.datetime.now(dt.timezone.utc).isoformat()
+
+
+def collect_history(client, data, extra=(), fetched=None):
+    """fetched: 카테고리 → 가져온 시각(UTC ISO)을 채워 줄 dict (전부 저장된 뒤 state 에 반영)."""
     new_rows = {}
     for cat in list(config.CATEGORIES) + [c for c in extra if c not in config.CATEGORIES]:
+        if fetched is not None:
+            fetched[cat] = now_iso()
         for h in client.sweep("history", cat, "auction_history"):
             ts = dt.datetime.fromisoformat(h["date_auction_buy"].replace("Z", "+00:00"))
             day = ts.astimezone(KST).date().isoformat()
@@ -193,9 +200,11 @@ def collect_history(client, data, extra=()):
     return added
 
 
-def collect_listings(client, data):
+def collect_listings(client, data, fetched=None):
     rows = []
     for cat in config.CATEGORIES:
+        if fetched is not None:
+            fetched[cat] = now_iso()
         for it in client.sweep("list", cat, "auction_item"):
             rows.append(with_rank({
                 "key": item_key(it),
@@ -310,12 +319,16 @@ def main():
         if do_hist:
             extra = npc_extra_categories(data)
             report["history_extra_categories"] = extra
-            report["history_added"] = collect_history(client, data, extra)
+            got = {}
+            report["history_added"] = collect_history(client, data, extra, got)
             state["last_history"] = now
+            state.setdefault("cat_history_at", {}).update(got)
             state["history_extra_categories"] = extra
         if do_list:
-            report["listings"] = collect_listings(client, data)
+            got = {}
+            report["listings"] = collect_listings(client, data, got)
             state["last_listings"] = now
+            state.setdefault("cat_listings_at", {}).update(got)
         if do_npc:
             report["npc_items"] = collect_npc(client, data)
             state["last_npc"] = now

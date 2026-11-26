@@ -92,6 +92,8 @@ def build_npc(data, market):
             value = unit * it["count"]
             net = value * (1 - config.FEE_RATE)
             r.update(unit_price=unit, basis=basis, value=value)
+            # 경매장 가격을 마지막으로 가져온 시각: 시세면 그 카테고리 체결 수집, 최저 매물이면 이름 조회
+            r["price_at"] = m.get("hist_at") if basis == "시세" else (lk or {}).get("checked_at")
             if it["currency"] == "골드":
                 r["profit"] = int(net - it["price"])
                 r["ratio"] = round(net / it["price"], 3) if it["price"] else None
@@ -257,6 +259,7 @@ def build_enchant(market, ranks):
             "key": key, "rank": rank,
             "scroll": scroll, "scroll_basis": "시세" if m.get("median") else "최저 매물",
             "scroll_trades": m.get("trades"), "scroll_listings": m.get("listings"),
+            "fetched_at": max(filter(None, [m.get("hist_at"), m.get("list_at")]), default=None),
             "ruin": rank in config.ENCHANT_RUIN_RANKS,
             "penalty_unknown": rank in config.ENCHANT_PENALTY_UNKNOWN,
         }
@@ -310,6 +313,12 @@ def main():
         if e["last"] is None or r["ts"] > e["last"][0]:
             e["last"] = (r["ts"], r["price"])
 
+    # 카테고리별로 체결·매물을 마지막으로 가져온 시각 (예전 state 에는 없으므로 전체 시각으로 대체)
+    st = {}
+    if (data / "state.json").exists():
+        with open(data / "state.json", encoding="utf-8") as f:
+            st = json.load(f)
+    hist_at = st.get("cat_history_at", {})
     snap = {"collected_at": None, "items": []}
     lp = data / "listings_latest.json.gz"
     if lp.exists():
@@ -332,7 +341,9 @@ def main():
         h = by_key.get(key)
         l = listings.get(key)
         cat = (h or l)["cat"]
-        row = {"key": key, "cat": cat}
+        row = {"key": key, "cat": cat,
+               "hist_at": hist_at.get(cat) or (st.get("last_history") if h else None),
+               "list_at": st.get("cat_listings_at", {}).get(cat) or (snap.get("collected_at") if l else None)}
         if h:
             n = len(h["trades"])
             row["trades"] = n

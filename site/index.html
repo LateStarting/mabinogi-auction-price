@@ -117,6 +117,7 @@
           <th data-k="volume" class="hide-sm">체결 수량<span class="period p-hist"></span></th>
           <th data-k="listed_qty" class="hide-sm">매물 수량<span class="period">현재</span></th>
           <th data-k="last_ts" class="hide-sm">최근 체결<span class="period">가격 · 시각</span></th>
+          <th data-k="fetched" class="hide-sm">가져온 시각<span class="period">체결 · 매물</span></th>
         </tr></thead>
         <tbody id="rows"></tbody>
       </table>
@@ -176,6 +177,7 @@
           <th data-k="items">장비 소모</th>
           <th data-k="be">본전 판매가<span class="period">장비 가격 반영</span></th>
           <th data-k="penalty">실패 시</th>
+          <th data-k="fetched_at" class="hide-sm">가져온 시각</th>
         </tr></thead>
         <tbody id="erows"></tbody>
       </table>
@@ -219,6 +221,7 @@
           <th data-k="grade_n">등급</th>
           <th data-k="listings_n">경매장 매물</th>
           <th data-k="limit">구매 제한</th>
+          <th data-k="price_at" class="hide-sm">가격 가져온 시각</th>
         </tr></thead>
         <tbody id="nrows"></tbody>
       </table>
@@ -266,6 +269,7 @@ function renderMarket() {
   const cat = $('cat').value;
   const traded = $('traded').checked;
   const deals = $('deals').checked;
+  DATA.items.forEach(r => { if (r.fetched === undefined) r.fetched = [r.hist_at, r.list_at].filter(Boolean).sort().pop() || null; });
   let rows = DATA.items.filter(r =>
     (!q || r.key.toLowerCase().includes(q)) &&
     (!cat || r.cat === cat) &&
@@ -291,6 +295,7 @@ function renderMarket() {
       <td class="hide-sm">${fmt(r.volume)}</td>
       <td class="hide-sm">${fmt(r.listed_qty)}</td>
       <td class="muted hide-sm">${r.last_price != null ? `${fmt(r.last_price)} · <span title="${timeKST(r.last_ts)}">${ago(r.last_ts)}</span>` : ''}</td>
+      <td class="muted hide-sm">${fetchedCell(r.hist_at, '체결')}${r.hist_at && r.list_at ? '<br>' : ''}${fetchedCell(r.list_at, '매물')}</td>
     </tr>${open ? detailRow(r) : ''}`;
   }).join('');
   CURRENT = rows;
@@ -388,6 +393,10 @@ $('rows').addEventListener('click', e => {
   renderMarket();
 });
 
+// "체결 12분 전" (마우스를 올리면 KST 시각)
+function fetchedCell(iso, label) {
+  return iso ? `<span title="${label} 가져온 시각 ${timeKST(iso)}">${label} ${ago(iso)}</span>` : '';
+}
 function ago(iso) {
   if (!iso) return '';
   const m = Math.round((Date.now() - new Date(iso)) / 60000);
@@ -447,7 +456,8 @@ function renderNpc() {
       <td>${r.grade ? `<span class="grade ${r.grade}" title="${gradeTip}">${r.grade}</span>` : ''}</td>
       <td>${r.listings != null ? esc(String(r.listings)) : '<span class="muted">조회 전</span>'}</td>
       <td class="muted">${r.limit ? esc(r.limit) : ''}</td>
-    </tr>${open && r.why ? `<tr class="detail"><td colspan="10"><ul class="reasons">
+      <td class="muted hide-sm">${r.price_at ? `<span title="${timeKST(r.price_at)}">${ago(r.price_at)}</span>` : ''}</td>
+    </tr>${open && r.why ? `<tr class="detail"><td colspan="11"><ul class="reasons">
         ${r.why.map(s => `<li class="ok">${esc(s)}</li>`).join('')}
         ${r.warn.map(s => `<li class="ng">${esc(s)}</li>`).join('')}
         ${r.checks ? `<h5>무위험에 가까운 후보 조건 (${r.checks.filter(c => c[1]).length}/4)</h5>` + r.checks.map(c => `<li class="${c[1] ? 'ok' : 'no'}">${esc(c[0])}</li>`).join('') : ''}
@@ -485,6 +495,7 @@ function renderEnchant() {
       <td class="${r.items > 1 ? 'neg' : 'muted'}">${r.items != null ? (r.items > 1 ? r.items.toFixed(2) + '개' : '1개') : ''}</td>
       <td>${base ? `<b>${fmt(r.be)}</b>` : `<span class="muted" title="바탕 장비 가격을 넣으면 계산">${fmt(r.be)}+</span>`}</td>
       <td class="${r.ruin ? 'neg' : 'muted'}">${r.penalty}</td>
+      <td class="muted hide-sm">${r.fetched_at ? `<span title="${timeKST(r.fetched_at)}">${ago(r.fetched_at)}</span>` : ''}</td>
     </tr>`).join('');
 }
 ['eq', 'erank', 'eday', 'ebase', 'etraded'].forEach(id => $(id).addEventListener('input', renderEnchant));
